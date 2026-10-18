@@ -575,30 +575,92 @@
             </div>
             <div>
               <label for="hold-symbol">Symbole / ISIN</label>
-              <input id="hold-symbol" maxlength="40" autocomplete="off" spellcheck="false" autocapitalize="characters" placeholder="ex. CW8.PA">
+              <input id="hold-symbol" maxlength="40" autocomplete="off" spellcheck="false" placeholder="ex. CW8.PA">
             </div>
           </div>
-          <p id="hold-symbol-hint" class="hint"></p>
           <label for="hold-label">Nom affiché (facultatif)</label>
           <input id="hold-label" maxlength="60" placeholder="ex. Amundi MSCI World">
+
+          <label for="hold-mode">Valeur de la position</label>
+          <select id="hold-mode">
+            <option value="saisie">Valeur saisie (lue dans Trade Republic)</option>
+            <option value="auto">Prix automatique</option>
+          </select>
+          <p id="hold-symbol-hint" class="hint"></p>
+          <div id="hold-manual-box" class="grid2">
+            <div>
+              <label for="hold-value">Valeur actuelle (€)</label>
+              <input id="hold-value" inputmode="decimal" autocomplete="off" placeholder="ex. 13 200">
+            </div>
+            <div>
+              <label for="hold-value-date">Au</label>
+              <input id="hold-value-date" type="date">
+            </div>
+          </div>
+
           <div class="grid2">
             <div>
               <label for="hold-quantity">Quantité</label>
-              <input id="hold-quantity" inputmode="decimal" autocomplete="off" placeholder="ex. 10 ou 0,01">
+              <input id="hold-quantity" inputmode="decimal" autocomplete="off" placeholder="ex. 25 ou 0,05">
             </div>
             <div>
-              <label for="hold-invested">Montant investi (€)</label>
-              <input id="hold-invested" inputmode="decimal" autocomplete="off" placeholder="ex. 1 000">
+              <label for="hold-pru">PRU (€)</label>
+              <input id="hold-pru" inputmode="decimal" autocomplete="off" placeholder="ex. 480">
+            </div>
+            <div>
+              <label for="hold-invested">ou investi total (€)</label>
+              <input id="hold-invested" inputmode="decimal" autocomplete="off" placeholder="calculé">
+            </div>
+            <div>
+              <label for="hold-monthly">Versement / mois (€)</label>
+              <input id="hold-monthly" inputmode="decimal" autocomplete="off" placeholder="0">
             </div>
           </div>
-          <label for="hold-date">Date du 1er achat</label>
-          <input id="hold-date" type="date">
-          <p class="hint">Sert au rendement annualisé. Seul le symbole est envoyé aux services de prix.</p>
+          <p class="hint">PRU = prix de revient unitaire affiché par Trade Republic. Investi = quantité × PRU (l’un se calcule à partir de l’autre).</p>
+
+          <div id="hold-etf-box">
+            <label for="hold-distribution">ETF</label>
+            <select id="hold-distribution">
+              <option value="capitalisant">Capitalisant (dividendes réinvestis dans l’ETF)</option>
+              <option value="distribuant">Distribuant (dividendes versés)</option>
+            </select>
+          </div>
+          <div id="hold-total-box">
+            <label for="hold-total-return" id="hold-total-label">Rendement total annuel estimé (%)</label>
+            <input id="hold-total-return" inputmode="decimal" autocomplete="off" placeholder="6">
+          </div>
+          <div id="hold-dist-box" class="grid2">
+            <div>
+              <label for="hold-price-return">Rendement du prix (%)</label>
+              <input id="hold-price-return" inputmode="decimal" autocomplete="off" placeholder="ex. 4">
+            </div>
+            <div>
+              <label for="hold-dividend">Rendement du dividende (%)</label>
+              <input id="hold-dividend" inputmode="decimal" autocomplete="off" placeholder="ex. 2">
+            </div>
+          </div>
+          <label class="check" id="hold-reinvest-box"><input type="checkbox" id="hold-reinvest" checked> Dividendes réinvestis</label>
+          <p class="hint">Seul le symbole est envoyé aux services de prix (mode automatique). Valeur indicative, rendements passés non garantis.</p>
           <p id="hold-msg" class="msg" role="status"></p>
           <button class="btn-primary" type="submit">Enregistrer</button>
           <div class="row">
             <button type="button" class="btn-ghost" id="hold-cancel">Annuler</button>
             <button type="button" class="btn-danger" id="hold-delete">Supprimer</button>
+          </div>
+        </form>
+      </dialog>
+
+      <!-- Relevé du mois : mise à jour des valeurs saisies -->
+      <dialog id="values-dialog" class="sheet" aria-labelledby="values-title">
+        <form id="values-form" novalidate>
+          <h2 id="values-title">Mettre à jour les valeurs saisies ?</h2>
+          <p class="muted">Recopie la valeur actuelle de chaque position depuis Trade Republic, puis relève les soldes.</p>
+          <div id="values-list"></div>
+          <p id="values-msg" class="msg" role="status"></p>
+          <button class="btn-primary" type="submit">Mettre à jour et relever</button>
+          <div class="row">
+            <button type="button" class="btn-ghost" id="values-skip">Relever sans modifier</button>
+            <button type="button" class="btn-ghost" id="values-cancel">Annuler</button>
           </div>
         </form>
       </dialog>
@@ -979,7 +1041,13 @@
         // PEA : le plafond porte sur le total des versements (pas sur la valeur du compte)
         capOnContributions: !!a.cap_on_contributions,
         contributedSoFar: Number(a.contributions_base ?? a.balance) || 0,
+        capGroup: a.cap_group || null,   // positions d'un même compte : un seul plafond pour toutes
+        groupName: a.group_name || a.name,
       }));
+      const groups = {};
+      for (const a of accs) {
+        if (a.capGroup && !groups[a.capGroup]) groups[a.capGroup] = { contributed: a.contributedSoFar, capMonth: null, name: a.groupName };
+      }
       const start = accs.reduce((s, a) => s + a.balance, 0);
       const points = [{ month: 0, total: start, contributed: 0, interest: 0 }];
       let contributed = 0;
@@ -987,17 +1055,25 @@
         for (const a of accs) {
           a.balance *= 1 + a.rate / 12;
           let v = a.monthly;
-          if (a.cap !== null) v = Math.max(0, Math.min(v, a.cap - (a.capOnContributions ? a.contributedSoFar : a.balance)));
+          const g = a.capGroup ? groups[a.capGroup] : null;
+          if (a.cap !== null) v = Math.max(0, Math.min(v, a.cap - (g ? g.contributed : a.capOnContributions ? a.contributedSoFar : a.balance)));
           if (a.cap !== null && a.capMonth === null && a.monthly > 0 && v < a.monthly) a.capMonth = m;
           a.balance += v;
           a.contributedSoFar += v;
+          if (g) g.contributed += v;
           contributed += v;
         }
         const total = accs.reduce((s, a) => s + a.balance, 0);
         points.push({ month: m, total, contributed, interest: total - start - contributed });
       }
-      const caps = accs.filter((a) => a.capMonth !== null)
-        .map((a) => ({ id: a.id, name: a.name, cap: a.cap, month: a.capMonth }));
+      // Un seul avertissement par compte (les positions d'un même PEA partagent le plafond)
+      const caps = [];
+      for (const a of accs.filter((x) => x.capMonth !== null)) {
+        const id = a.capGroup || a.id;
+        const prev = caps.find((c) => c.id === id);
+        if (!prev) caps.push({ id, name: a.capGroup ? a.groupName : a.name, cap: a.cap, month: a.capMonth });
+        else prev.month = Math.min(prev.month, a.capMonth);
+      }
       return { start, points, caps };
     }
 
@@ -1259,36 +1335,76 @@
     // Clé de prix d'une position : seul le symbole sert à interroger les API de prix.
     const priceKey = (h) => (h.asset_type === 'crypto' ? 'crypto:' + String(h.symbol).trim().toLowerCase()
                                                       : 'td:' + String(h.symbol).trim().toUpperCase());
-    // Scénarios de rendement annuel (%) : pessimiste / central / optimiste
+    // Mode de prix : 'auto' (CoinGecko / Twelve Data) ou 'saisie' (valeur lue dans Trade Republic).
+    // Par défaut : crypto en automatique, ETF et actions en valeur saisie.
+    const priceMode = (h) => h.price_mode || (h.asset_type === 'crypto' ? 'auto' : 'saisie');
+    const numOrNull = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+    // Montant investi = quantité × PRU (sinon le montant total saisi)
+    const holdingInvested = (h) => (numOrNull(h.pru) !== null ? (Number(h.quantity) || 0) * Number(h.pru) : Number(h.invested) || 0);
+    // Scénarios de rendement total annuel (%) : pessimiste / central / optimiste
     const SCENARIOS = { etf: [2, 5, 8], action: [0, 5, 10], crypto: [-15, 5, 25] };
+    const DEFAULT_ETF_RETURN = 6;   // capitalisant : rendement total annuel estimé par défaut
 
-    // Valeur réelle d'un compte à positions. prices : { clé: { eur } } ; todayMs : date du jour (ms)
-    function valueAccount(holdings, prices, todayMs) {
-      let value = 0, investedPriced = 0, missing = 0;
+    // Rendement annuel (%) servant à la projection d'une position.
+    // mode 'manuel' : rendements saisis ; 'scenarios' : SCENARIOS[type][i].
+    // ETF distribuant dont les dividendes ne sont PAS réinvestis : seul le rendement du prix fait grossir la position.
+    function positionRate(h, accountRate, mode = 'manuel', i = 1) {
+      const paidOut = h.asset_type === 'etf' && h.distribution === 'distribuant' && h.dividends_reinvested === false
+        ? (numOrNull(h.dividend_yield) || 0) : 0;
+      if (mode === 'scenarios') return (SCENARIOS[h.asset_type] || SCENARIOS.etf)[i] - paidOut;
+      if (h.asset_type === 'etf' && h.distribution === 'distribuant') {
+        return (numOrNull(h.price_return) || 0) + (h.dividends_reinvested === false ? 0 : numOrNull(h.dividend_yield) || 0);
+      }
+      if (h.asset_type === 'etf') return numOrNull(h.total_return) ?? DEFAULT_ETF_RETURN;
+      return numOrNull(h.total_return) ?? (Number(accountRate) || 0);
+    }
+
+    // Revenu annuel estimé des dividendes versés (ETF distribuant, non réinvestis)
+    const dividendIncome = (h, value) => (h.asset_type === 'etf' && h.distribution === 'distribuant' && h.dividends_reinvested === false
+      ? (Number(value) || 0) * (numOrNull(h.dividend_yield) || 0) / 100 : 0);
+
+    // Valeur d'un compte à positions. prices : { clé: { eur } } (positions en prix automatique).
+    // Plus-value = valeur actuelle − investi (investi = quantité × PRU).
+    function valueAccount(holdings, prices) {
+      let value = 0, investedValued = 0, missing = 0, monthly = 0, dividends = 0;
       const lines = holdings.map((h) => {
-        const q = Number(h.quantity) || 0, inv = Number(h.invested) || 0;
-        const p = prices[priceKey(h)];
-        const price = p && Number.isFinite(p.eur) ? p.eur : null;
-        if (price === null) { missing++; return { h, price: null, value: null, pnl: null }; }
-        const v = q * price;
-        value += v; investedPriced += inv;
-        return { h, price, value: v, pnl: v - inv, pnlPct: inv > 0 ? (v - inv) / inv : null };
+        const inv = holdingInvested(h);
+        monthly += Number(h.monthly_contribution) || 0;
+        let v = null, price = null;
+        if (priceMode(h) === 'saisie') v = numOrNull(h.manual_value);
+        else {
+          const p = prices[priceKey(h)];
+          price = p && Number.isFinite(p.eur) ? p.eur : null;
+          v = price === null ? null : (Number(h.quantity) || 0) * price;
+        }
+        if (v === null) { missing++; return { h, price, value: null, invested: inv, pnl: null, pnlPct: null, dividends: 0 }; }
+        value += v; investedValued += inv;
+        const div = dividendIncome(h, v);
+        dividends += div;
+        return { h, price, value: v, invested: inv, pnl: v - inv, pnlPct: inv > 0 ? (v - inv) / inv : null, dividends: div };
       });
-      const invested = holdings.reduce((s, h) => s + (Number(h.invested) || 0), 0);
-      const pnl = value - investedPriced;
-      const dates = holdings.map((h) => h.first_purchase).filter(Boolean).sort();
-      const days = dates.length ? (todayMs - Date.parse(dates[0] + 'T12:00:00Z')) / 86400000 : null;
-      // Rendement annualisé constaté (approximation : comme si tout avait été investi au 1er achat)
-      const cagr = missing === 0 && days !== null && days >= 30 && investedPriced > 0 && value > 0
-        ? Math.pow(value / investedPriced, 365.25 / days) - 1 : null;
-      // Scénarios pondérés par le montant investi
-      const weights = holdings.map((h) => Number(h.invested) || 0);
-      const wsum = weights.reduce((s, w) => s + w, 0);
-      const scenario = [0, 1, 2].map((i) => holdings.length
-        ? holdings.reduce((s, h, k) => s + (SCENARIOS[h.asset_type] || SCENARIOS.etf)[i] * (wsum > 0 ? weights[k] / wsum : 1 / holdings.length), 0)
-        : null);
-      return { value, invested, investedPriced, pnl, pnlPct: investedPriced > 0 ? pnl / investedPriced : null,
-               cagr, days, firstDate: dates[0] || null, complete: missing === 0, missing, lines, scenario };
+      const invested = holdings.reduce((s, h) => s + holdingInvested(h), 0);
+      const pnl = value - investedValued;
+      return { value, invested, investedValued, pnl, pnlPct: investedValued > 0 ? pnl / investedValued : null,
+               complete: missing === 0, missing, lines, monthly, dividends };
+    }
+
+    // Projection d'un compte à positions : une « ligne » par position (valeur du jour, versement mensuel,
+    // rendement propre). PEA : toutes ses positions partagent le plafond de 150 000 € de versements.
+    function positionsForProjection(account, val, { mode = 'manuel', i = 1, capOnContributions = false } = {}) {
+      return val.lines.map((l) => ({
+        id: l.h.id,
+        account_id: account.id,
+        name: `${account.name} · ${l.h.label || l.h.symbol}`,
+        balance: l.value,
+        monthly_contribution: Number(l.h.monthly_contribution) || 0,
+        annual_rate: positionRate(l.h, account.annual_rate, mode, i),
+        cap: capOnContributions ? numOrNull(account.cap) : null,
+        cap_on_contributions: capOnContributions,
+        cap_group: capOnContributions ? account.id : null,
+        group_name: account.name,
+        contributions_base: val.invested,
+      }));
     }
     // </holdings>
 
@@ -1859,17 +1975,29 @@
       },
     };
 
+    // Lignes de projection (Épargne et Vue d'ensemble) : comptes à positions détaillés position par position.
+    function projectionInputs(accounts, vals, { mode = 'manuel', i = 1 } = {}) {
+      return accounts.flatMap((a) => {
+        const v = vals[a.id];
+        const capOnContributions = !!typeInfo(a.type).capOnContributions;
+        if (v && v.complete) return positionsForProjection(a, v, { mode, i, capOnContributions });
+        return [capOnContributions
+          ? { ...a, cap_on_contributions: true, contributions_base: v ? v.invested : (a.stored_balance ?? a.balance) } : a];
+      });
+    }
+
     // Comptes avec leur valeur réelle : charge les positions, les prix, et remplace le solde
     // des comptes à positions par la valeur du jour (si tous les prix sont connus).
     async function loadRealAccounts(accounts, { force = false } = {}) {
       const ids = accounts.map((a) => a.id);
       const holdings = ids.length ? await db.list('ep_holdings', { space: 'tout', filters: { account_id: ids } }) : [];
-      const prices = holdings.length ? await Prices.get(holdings, { force }) : {};
-      const today = Date.now();
+      // Seules les positions en prix automatique interrogent CoinGecko / Twelve Data
+      const auto = holdings.filter((h) => priceMode(h) === 'auto');
+      const prices = auto.length ? await Prices.get(auto, { force }) : {};
       const vals = {};
       for (const a of accounts) {
         const hs = holdings.filter((h) => h.account_id === a.id);
-        if (hs.length) vals[a.id] = { ...valueAccount(hs, prices, today), holdings: hs };
+        if (hs.length) vals[a.id] = { ...valueAccount(hs, prices), holdings: hs };
       }
       const real = accounts.map((a) => (vals[a.id] && vals[a.id].complete
         ? { ...a, balance: vals[a.id].value, stored_balance: a.balance } : a));
@@ -2061,7 +2189,7 @@
             ${Object.keys(this.vals).length ? `
               <label>Rendement des comptes à positions</label>
               <div class="seg" role="radiogroup" aria-label="Rendement des comptes à positions">
-                ${[['manuel', 'Manuel'], ['constate', 'Constaté'], ['scenarios', 'Scénarios']].map(([m, l]) =>
+                ${[['manuel', 'Manuel'], ['scenarios', 'Scénarios']].map(([m, l]) =>
                   `<button type="button" role="radio" data-action="return-mode" data-mode="${m}" aria-checked="${m === this.returnMode}">${l}</button>`).join('')}
               </div>
               <p class="hint" id="return-hint"></p>` : ''}
@@ -2087,11 +2215,11 @@
         const meta = [info.label, fmtPct(a.annual_rate), `${money(a.monthly_contribution)}/mois`];
         if (a.cap !== null) meta.push(`plafond ${fmtEUR0.format(a.cap)}`);
         const v = this.vals[a.id];
-        if (v) meta.splice(1, 1, v.complete ? 'valeur du jour' : 'prix manquant');
+        if (v) meta.splice(1, 2, v.complete ? 'valeur du jour' : 'valeur manquante', `${money(v.monthly)}/mois (positions)`);
         const tags = [a.scope === 'commun' ? '<span class="tag tag-third">Commun</span>' : '<span class="tag">Privé</span>'];
         if (info.locked) tags.push('<span class="tag tag-warn">Bloqué 5 ans</span>');
         if (info.peaRule) tags.push('<span class="tag tag-warn">Retrait avant 5 ans : avantage fiscal perdu</span>');
-        if (v && v.complete && v.pnlPct !== null) tags.push(`<span class="tag ${v.pnl >= 0 ? 'tag-auto' : 'tag-pending'}">${v.pnl >= 0 ? '+' : '−'}${fmtEUR0.format(Math.abs(v.pnl))} (${fmtPercent.format(v.pnlPct)})</span>`);
+        if (v && v.complete && v.pnlPct !== null && v.investedValued > 0) tags.push(`<span class="tag ${v.pnl >= 0 ? 'tag-auto' : 'tag-pending'}">${v.pnl >= 0 ? '+' : '−'}${fmtEUR0.format(Math.abs(v.pnl))} (${fmtPercent.format(v.pnlPct)})</span>`);
         if (a.cap !== null && !info.capOnContributions && Number(a.balance) >= Number(a.cap)) tags.push('<span class="tag tag-warn">Plafond atteint</span>');
         return `
           <li><button type="button" class="acc-row" data-action="edit-account" data-id="${a.id}">
@@ -2104,27 +2232,17 @@
           </button></li>`;
       },
 
-      // Comptes prêts pour la projection : valeur réelle du jour ; pour les comptes à positions,
-      // rendement selon le mode (manuel / constaté / scénario n° i) ; PEA : plafond sur les versements.
+      // Lignes de projection : comptes classiques tels quels ; comptes à positions détaillés position par
+      // position (valeur du jour, versement mensuel, rendement propre) ; PEA : plafond de versements partagé.
       projectionAccounts(scenarioIdx = 1) {
-        return this.accounts.map((a) => {
-          const v = this.vals[a.id];
-          const out = { ...a };
-          if (typeInfo(a.type).capOnContributions) {
-            out.cap_on_contributions = true;
-            out.contributions_base = v ? v.invested : (a.stored_balance ?? a.balance);
-          }
-          if (v && v.complete) {
-            if (this.returnMode === 'constate' && v.cagr !== null) out.annual_rate = v.cagr * 100;
-            if (this.returnMode === 'scenarios') out.annual_rate = v.scenario[scenarioIdx];
-          }
-          return out;
-        });
+        return projectionInputs(this.accounts, this.vals, { mode: this.returnMode, i: scenarioIdx });
       },
 
       // Recalcule tableau, graphique et alertes (horizon, curseur ou compte choisi changés).
       updateProjection() {
-        const extra = this.extra.amount > 0 && this.extra.accountId ? this.extra : null;
+        let extra = this.extra.amount > 0 && this.extra.accountId ? { ...this.extra } : null;
+        // Effort sur un compte à positions : ajouté à sa première position
+        if (extra && this.vals[extra.accountId] && this.vals[extra.accountId].complete) extra.accountId = this.vals[extra.accountId].lines[0].h.id;
         const full = projectSavings(this.projectionAccounts(1), 20 * 12, extra);
         const hasVals = Object.keys(this.vals).length > 0;
         const range = hasVals && this.returnMode === 'scenarios'
@@ -2137,13 +2255,9 @@
             <td>${fmtEUR0.format(p.contributed)}</td><td>${fmtEUR0.format(p.interest)}</td></tr>`;
         }).join('');
         if (hasVals && $('return-hint')) {
-          const withVals = this.accounts.filter((a) => this.vals[a.id]);
           $('return-hint').textContent = this.returnMode === 'manuel'
-            ? 'Taux saisi sur chaque compte, appliqué à la valeur du jour.'
-            : this.returnMode === 'constate'
-              ? withVals.map((a) => { const v = this.vals[a.id];
-                  return `${a.name} : ${v.cagr === null ? 'trop récent ou date d’achat manquante → taux saisi' : fmtPercent.format(v.cagr) + '/an constaté'}`; }).join(' · ')
-              : 'Zone colorée = pessimiste → optimiste (ETF 2 / 5 / 8 %, actions 0 / 5 / 10 %, crypto −15 / 5 / 25 % par an). Tableau : central, puis fourchette.';
+            ? `Rendement saisi sur chaque position (ETF capitalisant : ${DEFAULT_ETF_RETURN} % par défaut ; sinon taux du compte), à partir de la valeur du jour, avec les versements programmés.`
+            : 'Zone colorée = pessimiste → optimiste (ETF 2 / 5 / 8 %, actions 0 / 5 / 10 %, crypto −15 / 5 / 25 % par an). Tableau : central, puis fourchette.';
         }
         this.drawChart(full, range);
         this.renderAlerts(full);
@@ -2273,7 +2387,7 @@
         $('acc-delete').hidden = !acc;
         this.prevType = $('acc-type').value;
         $('acc-type-hint').textContent = typeInfo(this.prevType).hint
-          + (acc && this.vals[acc.id] ? ' Le solde affiché vient de tes positions (valeur du jour).' : '');
+          + (acc && this.vals[acc.id] ? ' Le solde affiché vient de tes positions ; les versements mensuels se règlent sur chaque position.' : '');
         setMsg($('acc-msg'), '');
         $('account-dialog').showModal();
       },
@@ -2335,32 +2449,40 @@
         const invest = this.accounts.filter((a) => typeInfo(a.type).invest || this.vals[a.id]);
         if (!invest.length) return '';
         const when = (ms) => new Date(ms).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        const priceInfo = (h) => {
+        const valueInfo = (h) => {
+          if (priceMode(h) === 'saisie') {
+            return h.manual_value === null || h.manual_value === undefined ? '<span class="neg">Valeur à saisir</span>'
+              : `Valeur saisie le ${new Date((h.manual_value_date || isoDate()) + 'T12:00:00').toLocaleDateString('fr-FR')}`;
+          }
           const p = this.prices && this.prices[priceKey(h)];
           if (!p || p.eur === null || p.eur === undefined) return `<span class="neg">Prix indisponible${p && p.error ? ' : ' + esc(p.error) : ''}</span>`;
-          return p.stale ? `<span class="neg">Dernier prix connu du ${when(p.at)}</span> (${esc(p.error)})` : `${esc(p.source)}, ${when(p.at)}`;
+          return p.stale ? `<span class="neg">Dernier prix connu du ${when(p.at)}</span> (${esc(p.error)})`
+                         : `${money(p.eur)} · ${esc(p.source)}, ${when(p.at)}`;
         };
+        const etfInfo = (h) => (h.asset_type !== 'etf' ? '' : h.distribution === 'distribuant'
+          ? ` · distribuant, prix ${fmtPct(h.price_return)} + dividende ${fmtPct(h.dividend_yield)}${h.dividends_reinvested === false ? ' (versé)' : ' (réinvesti)'}`
+          : ` · capitalisant, ${fmtPct(h.total_return ?? DEFAULT_ETF_RETURN)}/an estimé`);
         return `
           <div class="card">
             <div class="card-head"><h2>Positions</h2>
               <button type="button" class="btn-small" data-action="refresh-prices">Actualiser les prix</button></div>
-            <p class="hint"><strong>Valeur indicative, rendements passés non garantis.</strong> Prix mis en cache 1 heure.</p>
+            <p class="hint"><strong>Valeur indicative, rendements passés non garantis.</strong> Prix automatiques mis en cache 1 heure.</p>
             ${invest.map((a) => {
               const v = this.vals[a.id];
               return `<div class="group-head"><span>${esc(a.name)}</span><span class="num">${v ? money(v.value) : '—'}</span></div>
                 ${v ? `<ul class="line-list">${v.lines.map((l) => `
                   <li><button type="button" class="line-row" data-action="edit-holding" data-id="${l.h.id}">
                     <span><span class="acc-name">${esc(l.h.label || l.h.symbol)} <span class="muted small">${esc(l.h.symbol)}</span></span>
-                      <span class="acc-meta">${numToInput(Number(l.h.quantity))} × ${l.price === null ? '?' : money(l.price)} · investi ${money(l.h.invested)}</span>
-                      <span class="acc-meta">${priceInfo(l.h)}</span></span>
+                      <span class="acc-meta">${numToInput(Number(l.h.quantity))} × PRU ${money(numOrNull(l.h.pru) ?? (l.invested / (Number(l.h.quantity) || 1)))} · investi ${money(l.invested)}${Number(l.h.monthly_contribution) ? ` · ${money(l.h.monthly_contribution)}/mois` : ''}</span>
+                      <span class="acc-meta">${valueInfo(l.h)}${etfInfo(l.h)}</span>
+                      ${l.dividends ? `<span class="acc-meta">Dividendes versés estimés : ${money(l.dividends)}/an</span>` : ''}</span>
                     <span class="line-amount">${l.value === null ? '—' : money(l.value)}
                       ${l.pnl === null ? '' : `<span class="delta ${l.pnl >= 0 ? 'pos' : 'neg'}">${l.pnl >= 0 ? '+' : '−'}${money(Math.abs(l.pnl))}${l.pnlPct === null ? '' : ' (' + fmtPercent.format(l.pnlPct) + ')'}</span>`}</span>
                   </button></li>`).join('')}</ul>
-                  <div class="kv"><span>Plus-value</span><span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))}${v.pnlPct === null ? '' : ' (' + fmtPercent.format(v.pnlPct) + ')'}</span></div>
-                  <div class="kv"><span>Rendement annualisé constaté</span><span>${v.cagr === null
-                    ? (v.firstDate ? 'moins de 30 jours de recul' : 'date du 1er achat manquante')
-                    : fmtPercent.format(v.cagr) + '/an depuis le ' + new Date(v.firstDate + 'T12:00:00').toLocaleDateString('fr-FR')}</span></div>
-                  ${v.complete ? '' : '<p class="hint neg">Prix manquant : le solde saisi du compte est utilisé en attendant.</p>'}`
+                  <div class="kv"><span>Plus-value (valeur − investi)</span><span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))}${v.pnlPct === null ? '' : ' (' + fmtPercent.format(v.pnlPct) + ')'}</span></div>
+                  ${v.monthly ? `<div class="kv"><span>Investissement programmé</span><span>${money(v.monthly)} / mois</span></div>` : ''}
+                  ${v.dividends ? `<div class="kv"><span>Revenu annuel estimé (dividendes versés)</span><span>${money(v.dividends)}</span></div>` : ''}
+                  ${v.complete ? '' : '<p class="hint neg">Valeur manquante : le solde saisi du compte est utilisé en attendant.</p>'}`
                 : '<p class="muted small">Aucune position : ajoute ce que contient ce compte.</p>'}
                 <button type="button" class="btn-small" data-action="add-holding" data-account="${a.id}" style="margin:8px 0 4px">+ Position</button>`;
             }).join('')}
@@ -2371,15 +2493,25 @@
         const h = id ? Object.values(this.vals).flatMap((v) => v.holdings).find((x) => x.id === id) : null;
         const acc = this.accounts.find((a) => a.id === (h ? h.account_id : accountId));
         this.editingHolding = { h, acc };
+        const type = h ? h.asset_type : (acc.type === 'crypto' ? 'crypto' : 'etf');
         $('hold-title').textContent = `${h ? 'Modifier la position' : 'Nouvelle position'} — ${acc.name}`;
-        $('hold-type').value = h ? h.asset_type : (acc.type === 'crypto' ? 'crypto' : 'etf');
+        $('hold-type').value = type;
+        $('hold-mode').value = h ? priceMode(h) : (type === 'crypto' ? 'auto' : 'saisie');
         $('hold-symbol').value = h ? h.symbol : '';
         $('hold-label').value = h ? h.label || '' : '';
+        $('hold-value').value = h ? numToInput(h.manual_value) : '';
+        $('hold-value-date').value = h && h.manual_value_date ? h.manual_value_date : isoDate();
         $('hold-quantity').value = h ? numToInput(Number(h.quantity)) : '';
-        $('hold-invested').value = h ? numToInput(h.invested) : '';
-        $('hold-date').value = h && h.first_purchase ? h.first_purchase : '';
+        $('hold-pru').value = h ? numToInput(h.pru) : '';
+        $('hold-invested').value = h ? numToInput(Math.round(holdingInvested(h) * 100) / 100) : '';
+        $('hold-monthly').value = h && Number(h.monthly_contribution) ? numToInput(h.monthly_contribution) : '';
+        $('hold-distribution').value = h && h.distribution ? h.distribution : 'capitalisant';
+        $('hold-total-return').value = h ? numToInput(h.total_return) : '';
+        $('hold-price-return').value = h ? numToInput(h.price_return) : '';
+        $('hold-dividend').value = h ? numToInput(h.dividend_yield) : '';
+        $('hold-reinvest').checked = !h || h.dividends_reinvested !== false;
         $('hold-delete').hidden = !h;
-        syncHoldingHint();
+        syncHoldingForm();
         setMsg($('hold-msg'), '');
         $('holding-dialog').showModal();
       },
@@ -2388,15 +2520,41 @@
         const msg = $('hold-msg');
         const { h, acc } = this.editingHolding;
         const asset_type = $('hold-type').value;
+        const price_mode = $('hold-mode').value;
         const symbol = $('hold-symbol').value.trim();
-        const quantity = parseAmount($('hold-quantity').value);
-        const investedRaw = $('hold-invested').value.trim();
-        const invested = investedRaw === '' ? 0 : parseAmount(investedRaw);
-        if (!symbol) return setMsg(msg, asset_type === 'crypto' ? 'Indique l’identifiant CoinGecko (ex. bitcoin).' : 'Indique le symbole (ex. CW8.PA) ou l’ISIN.');
-        if (quantity === null || quantity <= 0) return setMsg(msg, 'Indique la quantité (ex. 0,01).');
-        if (invested === null || invested < 0) return setMsg(msg, 'Montant investi illisible.');
-        const row = { asset_type, symbol: asset_type === 'crypto' ? symbol.toLowerCase() : symbol.toUpperCase(),
-                      label: $('hold-label').value.trim() || null, quantity, invested, first_purchase: $('hold-date').value || null };
+        const opt = (id) => { const raw = $(id).value.trim(); return raw === '' ? null : (parseAmount(raw) ?? NaN); };
+        const bad = (v) => Number.isNaN(v) || v === undefined;
+        const quantity = opt('hold-quantity');
+        const pru = opt('hold-pru');
+        const investedTotal = opt('hold-invested');
+        const manual_value = opt('hold-value');
+        const monthly = opt('hold-monthly');
+        if (!symbol && price_mode === 'auto') return setMsg(msg, asset_type === 'crypto' ? 'Indique l’identifiant CoinGecko (ex. bitcoin).' : 'Indique le symbole (ex. CW8.PA).');
+        if (!(quantity > 0)) return setMsg(msg, 'Indique la quantité (ex. 25 ou 0,05).');
+        if ([pru, investedTotal, manual_value, monthly].some((v) => v !== null && (bad(v) || v < 0))) return setMsg(msg, 'Un montant est illisible ou négatif.');
+        if (pru === null && investedTotal === null) return setMsg(msg, 'Indique le PRU (ou le montant investi total).');
+        if (price_mode === 'saisie' && manual_value === null) return setMsg(msg, 'Indique la valeur actuelle de la position.');
+        const isEtf = asset_type === 'etf';
+        const distribution = isEtf ? $('hold-distribution').value : null;
+        const row = {
+          asset_type, price_mode,
+          symbol: symbol ? (asset_type === 'crypto' ? symbol.toLowerCase() : symbol.toUpperCase()) : ($('hold-label').value.trim() || 'Position').slice(0, 40),
+          label: $('hold-label').value.trim() || null,
+          quantity,
+          // PRU prioritaire ; sinon déduit du montant investi total
+          pru: pru !== null ? pru : investedTotal / quantity,
+          invested: Math.round((pru !== null ? pru * quantity : investedTotal) * 100) / 100,
+          manual_value: price_mode === 'saisie' ? manual_value : null,
+          manual_value_date: price_mode === 'saisie' ? ($('hold-value-date').value || isoDate()) : null,
+          monthly_contribution: monthly || 0,
+          distribution,
+          total_return: !isEtf || distribution === 'capitalisant' ? opt('hold-total-return') : null,
+          price_return: distribution === 'distribuant' ? opt('hold-price-return') : null,
+          dividend_yield: distribution === 'distribuant' ? opt('hold-dividend') : null,
+          dividends_reinvested: distribution === 'distribuant' ? $('hold-reinvest').checked : true,
+        };
+        if ([row.total_return, row.price_return, row.dividend_yield].some((v) => v !== null && (bad(v) || Math.abs(v) > 100))) return setMsg(msg, 'Rendement en % : écris 6 pour 6 %.');
+        if (isEtf && distribution === 'capitalisant' && row.total_return === null) row.total_return = DEFAULT_ETF_RETURN;
         await withBusy(form, async () => {
           try {
             if (h) await db.update('ep_holdings', h.id, row);
@@ -2483,8 +2641,39 @@
       },
 
       // Enregistre le solde de chaque compte pour le mois en cours (met à jour si déjà relevé).
-      async takeSnapshot(btn) {
-        btn.disabled = true;
+      // « Relever les soldes » : propose d'abord de mettre à jour les valeurs saisies à la main.
+      takeSnapshot(btn) {
+        const manual = Object.values(this.vals).flatMap((v) => v.holdings).filter((h) => priceMode(h) === 'saisie');
+        if (!manual.length) return this.doSnapshot(btn);
+        $('values-list').innerHTML = manual.map((h) => {
+          const acc = this.accounts.find((a) => a.id === h.account_id);
+          return `<label for="val-${h.id}">${esc(acc.name)} · ${esc(h.label || h.symbol)}
+              <span class="muted small">(saisie le ${h.manual_value_date ? new Date(h.manual_value_date + 'T12:00:00').toLocaleDateString('fr-FR') : '—'})</span></label>
+            <input id="val-${h.id}" data-holding="${h.id}" inputmode="decimal" autocomplete="off" value="${numToInput(h.manual_value)}">`;
+        }).join('');
+        setMsg($('values-msg'), '');
+        $('values-dialog').showModal();
+      },
+
+      async saveValuesAndSnapshot(form) {
+        const updates = [];
+        for (const input of form.querySelectorAll('[data-holding]')) {
+          const v = parseAmount(input.value);
+          if (v === null || v < 0) { input.focus(); return setMsg($('values-msg'), 'Une valeur est illisible (ex. 13 200).'); }
+          updates.push([input.dataset.holding, v]);
+        }
+        await withBusy(form, async () => {
+          try {
+            await Promise.all(updates.map(([id, v]) => db.update('ep_holdings', id, { manual_value: v, manual_value_date: isoDate() })));
+          } catch (err) { return setMsg($('values-msg'), frError(err)); }
+          $('values-dialog').close();
+          await this.mount(this.root);   // recalcule les valeurs avant de relever
+          await this.doSnapshot(null);
+        });
+      },
+
+      async doSnapshot(btn) {
+        if (btn) btn.disabled = true;
         const month = monthStart();
         const now = new Date().toISOString();   // created_at réécrit = date du dernier relevé
         try {
@@ -2498,7 +2687,7 @@
           setMsg($('savings-msg'), `Soldes de ${fmtMonth.format(month)} enregistrés.`, 'ok');
         } catch (err) {
           setMsg($('savings-msg'), frError(err));
-          btn.disabled = false;
+          if (btn) btn.disabled = false;
         }
       },
     };
@@ -2511,14 +2700,43 @@
     $('acc-cancel').addEventListener('click', () => $('account-dialog').close());
     $('acc-delete').addEventListener('click', () => Savings.remove());
     $('snap-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveSnap(e.target); });
-    function syncHoldingHint() {
-      $('hold-symbol-hint').textContent = $('hold-type').value === 'crypto'
-        ? 'Identifiant CoinGecko, ex. bitcoin, ethereum, solana.'
-        : 'Ticker avec sa place de cotation (ex. CW8.PA, IWDA.AS) ou ISIN. Prix via Twelve Data (clé dans Réglages).';
+    function syncHoldingForm() {
+      const type = $('hold-type').value, auto = $('hold-mode').value === 'auto', etf = type === 'etf';
+      const dist = etf && $('hold-distribution').value === 'distribuant';
+      $('hold-symbol-hint').textContent = !auto
+        ? 'Tu recopies la valeur affichée dans Trade Republic ; « Relever les soldes » te proposera de la mettre à jour.'
+        : type === 'crypto' ? 'Prix CoinGecko : identifiant comme bitcoin, ethereum, solana.'
+        : 'Option secondaire : prix Twelve Data (clé dans Réglages). L’offre gratuite ne couvre pas la plupart des ETF européens.';
+      $('hold-manual-box').hidden = auto;
+      $('hold-etf-box').hidden = !etf;
+      $('hold-total-box').hidden = dist;
+      $('hold-dist-box').hidden = !dist;
+      $('hold-reinvest-box').hidden = !dist;
+      $('hold-total-label').textContent = etf ? 'Rendement total annuel estimé (%, prix + dividendes)' : 'Rendement annuel estimé (%, facultatif)';
+      $('hold-total-return').placeholder = etf ? String(DEFAULT_ETF_RETURN) : 'taux du compte';
     }
-    $('hold-type').addEventListener('change', syncHoldingHint);
+    // PRU ↔ montant investi : l'un se calcule à partir de l'autre
+    function syncInvested(from) {
+      const q = parseAmount($('hold-quantity').value);
+      if (!(q > 0)) return;
+      if (from === 'pru' || from === 'qty') {
+        const pru = parseAmount($('hold-pru').value);
+        if (pru !== null) $('hold-invested').value = numToInput(Math.round(q * pru * 100) / 100);
+      } else {
+        const inv = parseAmount($('hold-invested').value);
+        if (inv !== null) $('hold-pru').value = numToInput(Math.round(inv / q * 10000) / 10000);
+      }
+    }
+    for (const id of ['hold-type', 'hold-mode', 'hold-distribution']) $(id).addEventListener('change', syncHoldingForm);
+    $('hold-type').addEventListener('change', () => { $('hold-mode').value = $('hold-type').value === 'crypto' ? 'auto' : 'saisie'; syncHoldingForm(); });
+    $('hold-quantity').addEventListener('input', () => syncInvested('qty'));
+    $('hold-pru').addEventListener('input', () => syncInvested('pru'));
+    $('hold-invested').addEventListener('input', () => syncInvested('invested'));
     $('holding-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveHolding(e.target); });
     $('hold-cancel').addEventListener('click', () => $('holding-dialog').close());
+    $('values-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveValuesAndSnapshot(e.target); });
+    $('values-skip').addEventListener('click', () => { $('values-dialog').close(); Savings.doSnapshot(null); });
+    $('values-cancel').addEventListener('click', () => $('values-dialog').close());
     $('hold-delete').addEventListener('click', () => Savings.removeHolding());
     $('snap-cancel').addEventListener('click', () => $('snap-dialog').close());
     $('snap-delete').addEventListener('click', () => Savings.removeSnap());
@@ -2541,7 +2759,7 @@
     // month : mois affiché (la ligne « Prêt étudiant » vaut ce qui est réellement dû ce mois-là).
     async function loadPlan(space = state.space, month = monthStart()) {
       const perso = space === 'perso';
-      const [lines, incomes, accounts, myContribution, loans, goals] = await Promise.all([
+      const [lines, incomes, accounts, myContribution, loans, goals, holdings] = await Promise.all([
         db.list('ep_budget_lines', { space }),
         db.list('ep_incomes', { space }),
         db.list('ep_accounts', { space }),
@@ -2549,12 +2767,17 @@
         perso ? db.list('ep_incomes', { space: 'commun', filters: { kind: 'contribution', contributor_user_id: state.user.id } }) : [],
         perso ? db.list('ep_loans', { space }) : [],
         db.list('ep_goals', { space }),
+        db.list('ep_holdings', { space }),
       ]);
       const monthAbs = absMonth(isoMonth(month));
       // Mon espace : salaire + aides familiales mensuelles (les aides ponctuelles comptent dans leur mois, onglet Dépenses)
       const incomeParts = perso ? monthIncome(incomes, null) : null;
       const income = perso ? incomeParts.total : sumBy(incomes.filter((i) => i.kind === 'contribution'), (i) => i.amount);
-      const autos = { epargne: sumBy(accounts.filter((a) => a.type !== 'courant'), (a) => a.monthly_contribution) };
+      // Compte à positions : ses versements sont ceux programmés sur chaque position
+      const autos = { epargne: sumBy(accounts.filter((a) => a.type !== 'courant'), (a) => {
+        const hs = holdings.filter((h) => h.account_id === a.id);
+        return hs.length ? sumBy(hs, (h) => h.monthly_contribution) : a.monthly_contribution;
+      }) };
       if (perso) {
         autos.virement_commun = sumBy(myContribution, (i) => i.amount);
         // Ce qui est réellement dû ce mois-là (mode calcul ou échéancier), pour ma part seulement
@@ -2583,7 +2806,7 @@
     }
 
     const AUTO_HINTS = {
-      epargne: (sp) => `Somme des versements mensuels de ${sp === 'perso' ? 'tes' : 'vos'} comptes (hors compte courant), modifiable dans Épargne.`,
+      epargne: (sp) => `Somme des versements mensuels de ${sp === 'perso' ? 'tes' : 'vos'} comptes et positions (hors compte courant), modifiable dans Épargne.`,
       virement_commun: () => 'Ta contribution saisie dans le Commun.',
       pret: () => 'Montant dû ce mois-ci d’après l’onglet Prêt (0 pendant un différé total).',
     };
@@ -3847,8 +4070,7 @@
 
         // Un bloc : comptes (badge Privé / Commun), projection, mois en cours
         const block = (sp, title, badge, list, total, m) => {
-          const proj = projectSavings(list.map((a) => (typeInfo(a.type).capOnContributions
-            ? { ...a, cap_on_contributions: true, contributions_base: vals[a.id] ? vals[a.id].invested : a.balance } : a)), 240);
+          const proj = projectSavings(projectionInputs(list, vals), 240);
           const r = m.result;
           const ratio = r.planned > 0 ? r.real / r.planned : (r.real > 0 ? Infinity : 0);
           const level = ratio > 1 ? 'over' : ratio >= 0.9 ? 'near' : 'ok';
@@ -3914,7 +4136,7 @@
             ${loanItems ? `<div class="group-head"><span>Prêts</span></div>${loanItems}` : ''}
             ${goalItems ? `<div class="group-head"><span>Objectifs</span><span>à mettre de côté</span></div>${goalItems}` : ''}
           </div>` : ''}
-          ${Object.keys(vals).length ? '<p class="hint">Comptes à positions : valeur indicative du jour, rendements passés non garantis. Projections avec les taux saisis (scénarios dans Épargne).</p>' : ''}`;
+          ${Object.keys(vals).length ? '<p class="hint">Comptes à positions : valeur indicative du jour, rendements passés non garantis. Projections avec les rendements saisis et les versements programmés de chaque position (scénarios dans Épargne).</p>' : ''}`;
       },
     };
 
