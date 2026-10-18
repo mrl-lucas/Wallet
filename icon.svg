@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Wallet : icône d'écran d'accueil (fond plein, iOS arrondit lui-même les coins) -->
+  <rect width="512" height="512" fill="#1f5546"/>
+  <g fill="none" stroke="#f4f1ea" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M112 172v178a40 40 0 0 0 40 40h244a20 20 0 0 0 20-20V214a20 20 0 0 0-20-20H152a40 40 0 0 1-40-40 40 40 0 0 1 40-40h206"/>
+  </g>
+  <circle cx="340" cy="292" r="22" fill="#dba862"/>
+</svg>

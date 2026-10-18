@@ -1,0 +1,8 @@
+# Fichiers système macOS
+.DS_Store
+
+# Ancienne version de la phase 1 : sauvegarde locale, pas besoin de la publier
+index_V1.html
+
+# Réglages locaux de Claude Code
+.claude/
