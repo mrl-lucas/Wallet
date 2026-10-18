@@ -1,0 +1,10 @@
+#!/bin/sh
+# Wallet : refuse un commit qui ajouterait une clé secrète Supabase, un jeton
+# ou une clé d'API (ex. Twelve Data, qui doit rester dans le localStorage de l'appareil).
+pattern='sb_secret_[A-Za-z0-9_]+|service_role[^a-z]*[:=][^,;]*[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}|apikey=[A-Za-z0-9]{16,}|[0-9a-f]{32}'
+if git diff --cached -U0 --no-color | grep '^+' | grep -v '^+++' | grep -Eq "$pattern"; then
+  echo "Commit refusé : une clé (secrète ou d'API) semble présente dans les modifications :"
+  git diff --cached -U0 --no-color | grep '^+' | grep -v '^+++' | grep -En "$pattern" | cut -c1-120
+  exit 1
+fi
+exit 0

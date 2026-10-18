@@ -4,6 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
+  <!-- Sécurité : seuls Supabase, jsDelivr (Supabase JS + Chart.js) et les deux API de prix sont autorisés.
+       Aucun autre script, outil d'analyse ou destination réseau ne peut être utilisé par la page. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://fycuoqqecbmbqgindjpx.supabase.co wss://fycuoqqecbmbqgindjpx.supabase.co https://api.coingecko.com https://api.twelvedata.com; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <title>Wallet</title>
   <!-- Installation sur l'écran d'accueil (iPhone : Partager → Sur l'écran d'accueil) -->
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -251,9 +255,9 @@
     .acc-total { display: flex; justify-content: space-between; padding: 12px 0 4px; border-top: 3px double var(--border); font-weight: 700; }
     .chart-box { position: relative; height: 260px; margin: 12px 0 4px; }
     .proj-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 12px; font-variant-numeric: tabular-nums; }
-    .proj-table th, .proj-table td { padding: 8px 4px; text-align: right; border-bottom: 1px dashed var(--border); white-space: nowrap; }
+    .proj-table th, .proj-table td { padding: 8px 3px; text-align: right; border-bottom: 1px dashed var(--border); white-space: nowrap; }
     .proj-table th:first-child, .proj-table td:first-child { text-align: left; }
-    .proj-table th { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+    .proj-table th { font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
     .proj-table tr.is-current td { font-weight: 700; color: var(--space); }
     .range-head { display: flex; justify-content: space-between; align-items: baseline; margin-top: 16px; }
     .range-head label { margin: 0; }
@@ -331,7 +335,7 @@
     /* ---------- Prêt & Objectifs ---------- */
     .kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px dashed var(--border); font-size: .94rem; }
     .kv:first-of-type { border-top: 0; }
-    .kv > span:last-child { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .kv > span:last-child { font-variant-numeric: tabular-nums; text-align: right; }   /* les montants fr ne se coupent pas (espaces insécables) */
     .kv.sub { padding-left: 14px; font-size: .86rem; color: var(--muted); }
     .kv.strong { font-weight: 700; border-top: 3px double var(--border); }
     .share-row { padding: 10px 0; }
@@ -556,6 +560,49 @@
         </form>
       </dialog>
 
+      <!-- Position d'un compte d'investissement -->
+      <dialog id="holding-dialog" class="sheet" aria-labelledby="hold-title">
+        <form id="holding-form" novalidate>
+          <h2 id="hold-title">Nouvelle position</h2>
+          <div class="grid2">
+            <div>
+              <label for="hold-type">Type</label>
+              <select id="hold-type">
+                <option value="etf">ETF</option>
+                <option value="action">Action</option>
+                <option value="crypto">Crypto</option>
+              </select>
+            </div>
+            <div>
+              <label for="hold-symbol">Symbole / ISIN</label>
+              <input id="hold-symbol" maxlength="40" autocomplete="off" spellcheck="false" autocapitalize="characters" placeholder="ex. CW8.PA">
+            </div>
+          </div>
+          <p id="hold-symbol-hint" class="hint"></p>
+          <label for="hold-label">Nom affiché (facultatif)</label>
+          <input id="hold-label" maxlength="60" placeholder="ex. Amundi MSCI World">
+          <div class="grid2">
+            <div>
+              <label for="hold-quantity">Quantité</label>
+              <input id="hold-quantity" inputmode="decimal" autocomplete="off" placeholder="ex. 10 ou 0,01">
+            </div>
+            <div>
+              <label for="hold-invested">Montant investi (€)</label>
+              <input id="hold-invested" inputmode="decimal" autocomplete="off" placeholder="ex. 1 000">
+            </div>
+          </div>
+          <label for="hold-date">Date du 1er achat</label>
+          <input id="hold-date" type="date">
+          <p class="hint">Sert au rendement annualisé. Seul le symbole est envoyé aux services de prix.</p>
+          <p id="hold-msg" class="msg" role="status"></p>
+          <button class="btn-primary" type="submit">Enregistrer</button>
+          <div class="row">
+            <button type="button" class="btn-ghost" id="hold-cancel">Annuler</button>
+            <button type="button" class="btn-danger" id="hold-delete">Supprimer</button>
+          </div>
+        </form>
+      </dialog>
+
       <!-- Correction d'un relevé de solde -->
       <dialog id="snap-dialog" class="sheet" aria-labelledby="snap-title">
         <form id="snap-form" novalidate>
@@ -769,6 +816,30 @@
           <button id="copy-code" type="button" class="btn-ghost" style="width:100%">Copier le code</button>
         </div>
 
+        <form id="form-share" class="card" novalidate>
+          <h2>Ma part du compte commun</h2>
+          <p class="muted">Sert au total « Moi + ma part du commun » de la Vue d’ensemble. Réglage personnel.</p>
+          <label for="set-share">Part (%)</label>
+          <input id="set-share" inputmode="decimal" autocomplete="off" placeholder="50">
+          <button class="btn-primary" type="submit">Enregistrer ma part</button>
+          <p id="share-msg" class="msg" role="status"></p>
+        </form>
+
+        <form id="form-prices" class="card" novalidate>
+          <h2>Prix des marchés</h2>
+          <p class="muted">Crypto : CoinGecko, sans clé. ETF et actions : Twelve Data, avec ta clé gratuite (twelvedata.com).
+            La clé reste uniquement sur cet appareil : jamais dans le code, la base ou GitHub.
+            Seul le symbole de l’actif est envoyé à ces services.</p>
+          <label for="set-tdkey">Clé Twelve Data</label>
+          <input id="set-tdkey" type="password" autocomplete="off" spellcheck="false" placeholder="non renseignée">
+          <button class="btn-primary" type="submit">Enregistrer la clé sur cet appareil</button>
+          <div class="row">
+            <button type="button" class="btn-ghost" id="tdkey-forget">Oublier la clé</button>
+            <button type="button" class="btn-ghost" id="prices-clear">Vider le cache des prix</button>
+          </div>
+          <p id="prices-msg" class="msg" role="status"></p>
+        </form>
+
         <div class="card">
           <h2>Apparence</h2>
           <div id="theme-choice" class="seg" role="radiogroup" aria-label="Thème">
@@ -905,6 +976,9 @@
         rate: (Number(a.annual_rate) || 0) / 100,
         cap: a.cap === null || a.cap === undefined || a.cap === '' ? null : Number(a.cap),
         capMonth: null,       // 1er mois où le versement est réduit par le plafond
+        // PEA : le plafond porte sur le total des versements (pas sur la valeur du compte)
+        capOnContributions: !!a.cap_on_contributions,
+        contributedSoFar: Number(a.contributions_base ?? a.balance) || 0,
       }));
       const start = accs.reduce((s, a) => s + a.balance, 0);
       const points = [{ month: 0, total: start, contributed: 0, interest: 0 }];
@@ -913,9 +987,10 @@
         for (const a of accs) {
           a.balance *= 1 + a.rate / 12;
           let v = a.monthly;
-          if (a.cap !== null) v = Math.max(0, Math.min(v, a.cap - a.balance));
+          if (a.cap !== null) v = Math.max(0, Math.min(v, a.cap - (a.capOnContributions ? a.contributedSoFar : a.balance)));
           if (a.cap !== null && a.capMonth === null && a.monthly > 0 && v < a.monthly) a.capMonth = m;
           a.balance += v;
+          a.contributedSoFar += v;
           contributed += v;
         }
         const total = accs.reduce((s, a) => s + a.balance, 0);
@@ -1180,11 +1255,48 @@
     }
     // </loan>
 
+    // <holdings> — fonctions pures (sans DOM, ni réseau, ni Supabase), testées hors navigateur.
+    // Clé de prix d'une position : seul le symbole sert à interroger les API de prix.
+    const priceKey = (h) => (h.asset_type === 'crypto' ? 'crypto:' + String(h.symbol).trim().toLowerCase()
+                                                      : 'td:' + String(h.symbol).trim().toUpperCase());
+    // Scénarios de rendement annuel (%) : pessimiste / central / optimiste
+    const SCENARIOS = { etf: [2, 5, 8], action: [0, 5, 10], crypto: [-15, 5, 25] };
+
+    // Valeur réelle d'un compte à positions. prices : { clé: { eur } } ; todayMs : date du jour (ms)
+    function valueAccount(holdings, prices, todayMs) {
+      let value = 0, investedPriced = 0, missing = 0;
+      const lines = holdings.map((h) => {
+        const q = Number(h.quantity) || 0, inv = Number(h.invested) || 0;
+        const p = prices[priceKey(h)];
+        const price = p && Number.isFinite(p.eur) ? p.eur : null;
+        if (price === null) { missing++; return { h, price: null, value: null, pnl: null }; }
+        const v = q * price;
+        value += v; investedPriced += inv;
+        return { h, price, value: v, pnl: v - inv, pnlPct: inv > 0 ? (v - inv) / inv : null };
+      });
+      const invested = holdings.reduce((s, h) => s + (Number(h.invested) || 0), 0);
+      const pnl = value - investedPriced;
+      const dates = holdings.map((h) => h.first_purchase).filter(Boolean).sort();
+      const days = dates.length ? (todayMs - Date.parse(dates[0] + 'T12:00:00Z')) / 86400000 : null;
+      // Rendement annualisé constaté (approximation : comme si tout avait été investi au 1er achat)
+      const cagr = missing === 0 && days !== null && days >= 30 && investedPriced > 0 && value > 0
+        ? Math.pow(value / investedPriced, 365.25 / days) - 1 : null;
+      // Scénarios pondérés par le montant investi
+      const weights = holdings.map((h) => Number(h.invested) || 0);
+      const wsum = weights.reduce((s, w) => s + w, 0);
+      const scenario = [0, 1, 2].map((i) => holdings.length
+        ? holdings.reduce((s, h, k) => s + (SCENARIOS[h.asset_type] || SCENARIOS.etf)[i] * (wsum > 0 ? weights[k] / wsum : 1 / holdings.length), 0)
+        : null);
+      return { value, invested, investedPriced, pnl, pnlPct: investedPriced > 0 ? pnl / investedPriced : null,
+               cagr, days, firstDate: dates[0] || null, complete: missing === 0, missing, lines, scenario };
+    }
+    // </holdings>
+
     // ================== Couche de données ==================
     // Tables « à espace » : chaque ligne porte household_id + scope + user_id.
     // db.insert les remplit tout seul selon l'espace actif ; la RLS fait le reste côté base.
     const SCOPED_TABLES = ['ep_accounts', 'ep_budget_lines', 'ep_month_overrides',
-                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals'];
+                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals', 'ep_holdings'];
     const db = {
       isScoped: (table) => SCOPED_TABLES.includes(table),
 
@@ -1345,7 +1457,7 @@
       // La RLS ne renvoie que MA ligne de membre (et celle de mon/ma partenaire).
       const { data: me, error } = await sb
         .from('ep_members')
-        .select('household_id, first_name, slot, ep_households(id, name, invite_code)')
+        .select('household_id, first_name, slot, common_share, ep_households(id, name, invite_code)')
         .eq('user_id', state.user.id)
         .maybeSingle();
       if (error) throw error;
@@ -1394,6 +1506,8 @@
       // Réglages : valeurs actuelles (sans écraser une saisie en cours)
       if (document.activeElement !== $('set-firstname')) $('set-firstname').value = state.member.first_name;
       if (document.activeElement !== $('set-household')) $('set-household').value = state.household.name;
+      if (document.activeElement !== $('set-share')) $('set-share').value = numToInput(commonShare());
+      $('set-tdkey').placeholder = getTwelveKey() ? 'clé enregistrée sur cet appareil' : 'non renseignée';
       $('set-email').textContent = state.user.email;
 
       renderApp();
@@ -1647,6 +1761,121 @@
     window.addEventListener('hashchange', onHash);
     window.addEventListener('popstate', onHash);
 
+    // ================== Prix de marché (CoinGecko, Twelve Data) ==================
+    // Confidentialité : chaque requête n'envoie QUE le symbole de l'actif (et, pour Twelve Data, la clé
+    // de l'utilisateur). Jamais de quantité, de montant, d'identifiant ni de donnée Supabase ;
+    // pas de cookie ni de « referer ». La clé Twelve Data reste dans le localStorage de cet appareil.
+    const TD_KEY_STORAGE = 'ep_twelvedata_key';
+    const PRICE_CACHE_STORAGE = 'ep_prices';
+    const PRICE_TTL_MS = 60 * 60 * 1000;   // cache d'une heure
+    const getTwelveKey = () => { try { return localStorage.getItem(TD_KEY_STORAGE) || ''; } catch (e) { return ''; } };
+    const MIC_BY_SUFFIX = { PA: 'XPAR', AS: 'XAMS', BR: 'XBRU', LS: 'XLIS', DE: 'XETR', F: 'XFRA', MI: 'XMIL',
+                            MC: 'XMAD', L: 'XLON', SW: 'XSWX', VI: 'XWBO', CO: 'XCSE', ST: 'XSTO', HE: 'XHEL', OL: 'XOSL' };
+
+    // « CW8.PA » → symbol=CW8 & mic_code=XPAR ; un ISIN → isin=… ; sinon le symbole tel quel.
+    function twelveDataParams(symbol) {
+      const s = String(symbol).trim().toUpperCase();
+      if (/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s)) return { isin: s };
+      const m = /^(.+)\.([A-Z]{1,2})$/.exec(s);
+      if (m && MIC_BY_SUFFIX[m[2]]) return { symbol: m[1], mic_code: MIC_BY_SUFFIX[m[2]] };
+      return { symbol: s };
+    }
+
+    async function fetchPublicJSON(url) {
+      const res = await fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }
+
+    const Prices = {
+      queue: Promise.resolve(),
+
+      readCache() { try { return JSON.parse(localStorage.getItem(PRICE_CACHE_STORAGE)) || {}; } catch (e) { return {}; } },
+      writeCache(c) { try { localStorage.setItem(PRICE_CACHE_STORAGE, JSON.stringify(c)); } catch (e) {} },
+      clear() { try { localStorage.removeItem(PRICE_CACHE_STORAGE); } catch (e) {} },
+
+      // Prix en € pour une liste de positions. Les appels sont mis en file pour profiter du cache.
+      get(holdings, { force = false } = {}) {
+        const run = () => this.fetchMissing(holdings, force);
+        this.queue = this.queue.then(run, run);
+        return this.queue;
+      },
+
+      async fetchMissing(holdings, force) {
+        const cache = this.readCache();
+        const now = Date.now();
+        const keys = [...new Set(holdings.map(priceKey))];
+        const todo = keys.filter((k) => force || !cache[k] || now - cache[k].at > PRICE_TTL_MS);
+        const errors = {};
+
+        // Crypto : une seule requête CoinGecko pour tous les identifiants
+        const ids = todo.filter((k) => k.startsWith('crypto:')).map((k) => k.slice(7));
+        if (ids.length) {
+          try {
+            const data = await fetchPublicJSON('https://api.coingecko.com/api/v3/simple/price?vs_currencies=eur&ids='
+              + encodeURIComponent(ids.join(',')));
+            for (const id of ids) {
+              if (data[id] && Number.isFinite(data[id].eur)) cache['crypto:' + id] = { eur: data[id].eur, at: now, source: 'CoinGecko' };
+              else errors['crypto:' + id] = 'identifiant inconnu de CoinGecko';
+            }
+          } catch (err) { for (const id of ids) errors['crypto:' + id] = 'CoinGecko indisponible'; }
+        }
+
+        // ETF / actions : Twelve Data (clé personnelle obligatoire)
+        const tdKeys = todo.filter((k) => k.startsWith('td:'));
+        const apikey = getTwelveKey();
+        for (const k of tdKeys) {
+          if (!apikey) { errors[k] = 'clé Twelve Data à saisir dans Réglages'; continue; }
+          try {
+            const q = new URLSearchParams({ ...twelveDataParams(k.slice(3)), apikey });
+            const data = await fetchPublicJSON('https://api.twelvedata.com/quote?' + q);
+            if (data.status === 'error' || !data.close) throw new Error(data.message || 'symbole introuvable');
+            let price = Number(data.close);
+            let currency = data.currency || 'EUR';
+            if (currency === 'GBp' || currency === 'GBX') { price /= 100; currency = 'GBP'; }
+            if (currency !== 'EUR') price *= await this.fxToEur(currency, apikey, cache, now);
+            cache[k] = { eur: price, at: now, source: 'Twelve Data', currency };
+          } catch (err) { errors[k] = 'Twelve Data : ' + (err.message || 'erreur'); }
+        }
+
+        this.writeCache(cache);
+        const out = {};
+        for (const k of keys) {
+          const c = cache[k];
+          out[k] = c ? { ...c, stale: !!errors[k], error: errors[k] || null } : { eur: null, error: errors[k] || 'prix inconnu' };
+        }
+        return out;
+      },
+
+      // Taux de change vers l'euro (même cache d'une heure)
+      async fxToEur(currency, apikey, cache, now) {
+        const k = 'fx:' + currency;
+        if (cache[k] && now - cache[k].at <= PRICE_TTL_MS) return cache[k].rate;
+        const data = await fetchPublicJSON('https://api.twelvedata.com/exchange_rate?'
+          + new URLSearchParams({ symbol: currency + '/EUR', apikey }));
+        if (!Number.isFinite(Number(data.rate))) throw new Error('taux ' + currency + '/EUR indisponible');
+        cache[k] = { rate: Number(data.rate), at: now };
+        return cache[k].rate;
+      },
+    };
+
+    // Comptes avec leur valeur réelle : charge les positions, les prix, et remplace le solde
+    // des comptes à positions par la valeur du jour (si tous les prix sont connus).
+    async function loadRealAccounts(accounts, { force = false } = {}) {
+      const ids = accounts.map((a) => a.id);
+      const holdings = ids.length ? await db.list('ep_holdings', { space: 'tout', filters: { account_id: ids } }) : [];
+      const prices = holdings.length ? await Prices.get(holdings, { force }) : {};
+      const today = Date.now();
+      const vals = {};
+      for (const a of accounts) {
+        const hs = holdings.filter((h) => h.account_id === a.id);
+        if (hs.length) vals[a.id] = { ...valueAccount(hs, prices, today), holdings: hs };
+      }
+      const real = accounts.map((a) => (vals[a.id] && vals[a.id].complete
+        ? { ...a, balance: vals[a.id].value, stored_balance: a.balance } : a));
+      return { accounts: real, vals, prices, holdings };
+    }
+
     // ================== Onglet Épargne ==================
     // rate / cap : pré-remplissages (modifiables) ; locked : PEE ; risky : rendement = hypothèse.
     const ACCOUNT_TYPES = {
@@ -1657,11 +1886,15 @@
                        hint: 'Même taux que le Livret A ; plafond 12 000 € pré-rempli (modifiables).' },
       pee:           { label: 'PEE (entreprise)', locked: true,
                        hint: 'Bloqué 5 ans (sauf cas de déblocage anticipé).' },
-      bourse:        { label: 'Trade Republic / bourse', risky: true,
+      bourse:        { label: 'Trade Republic / bourse', risky: true, invest: true,
                        hint: 'Rendement estimé = hypothèse : la bourse peut baisser certaines années.' },
+      pea:           { label: 'PEA', risky: true, invest: true, cap: 150000, capOnContributions: true, peaRule: true,
+                       hint: 'Plafond de versements 150 000 €. Retrait avant 5 ans = perte de l’avantage fiscal. Ajoute tes ETF dans « Positions ».' },
+      cto:           { label: 'Compte-titres (CTO)', risky: true, invest: true,
+                       hint: 'Pas de plafond. Ajoute tes ETF ou actions dans « Positions ».' },
       assurance_vie: { label: 'Assurance-vie', risky: true,
                        hint: 'Rendement estimé : fonds euros ≈ sûr, unités de compte = hypothèse.' },
-      crypto:        { label: 'Crypto', risky: true, hint: 'Très volatil : le rendement saisi est une pure hypothèse.' },
+      crypto:        { label: 'Crypto', risky: true, invest: true, hint: 'Très volatil. Ajoute tes cryptos (ex. bitcoin) dans « Positions ».' },
       autre:         { label: 'Autre', hint: '' },
     };
     const LIQUID_TYPES = ['courant', 'livret_a', 'ldds'];   // épargne disponible (fonds d'urgence)
@@ -1683,7 +1916,7 @@
     if (window.Chart) Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
 
     const Savings = {
-      root: null, accounts: [], snapshots: [], plan: null,
+      root: null, accounts: [], snapshots: [], plan: null, vals: {}, returnMode: 'manuel', editingHolding: null,
       horizon: 10,                          // années affichées sur le graphique
       extra: { accountId: null, amount: 0 }, // effort simulé (jamais enregistré)
       chart: null, loadToken: 0, editing: null, prevType: null,
@@ -1695,7 +1928,11 @@
         this.root = root;
         const token = ++this.loadToken;
         try {
-          const accounts = await db.list('ep_accounts');
+          const real = await loadRealAccounts(await db.list('ep_accounts'), { force: this.forcePrices });
+          this.forcePrices = false;
+          const accounts = real.accounts;
+          this.vals = real.vals;
+          this.prices = real.prices;
           const [snapshots, plan] = await Promise.all([
             accounts.length
               ? db.list('ep_balance_snapshots', { filters: { account_id: accounts.map((a) => a.id) }, order: 'month' })
@@ -1726,6 +1963,14 @@
           if (action === 'edit-account') this.openForm(this.accounts.find((a) => a.id === el.dataset.id));
           if (action === 'snapshot') this.takeSnapshot(el);
           if (action === 'edit-snap') this.openSnap(el.dataset.account, el.dataset.month);
+          if (action === 'add-holding') this.openHolding(null, el.dataset.account);
+          if (action === 'edit-holding') this.openHolding(el.dataset.id);
+          if (action === 'refresh-prices') { this.forcePrices = true; this.mount(this.root); }
+          if (action === 'return-mode') {
+            this.returnMode = el.dataset.mode;
+            root.querySelectorAll('[data-action=return-mode]').forEach((b) => b.setAttribute('aria-checked', b.dataset.mode === this.returnMode));
+            this.updateProjection();
+          }
         });
         root.addEventListener('input', (e) => {
           if (e.target.id !== 'extra-range') return;
@@ -1794,6 +2039,8 @@
             <p id="savings-msg" class="msg" role="status"></p>
           </div>
 
+          ${this.holdingsHTML()}
+
           ${this.historyHTML()}
 
           <div class="card">
@@ -1811,13 +2058,21 @@
               ${this.accounts.map((a) => `<option value="${a.id}" ${a.id === this.extra.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
             </select>
             <p class="hint">Simulation : rien n’est enregistré.</p>
+            ${Object.keys(this.vals).length ? `
+              <label>Rendement des comptes à positions</label>
+              <div class="seg" role="radiogroup" aria-label="Rendement des comptes à positions">
+                ${[['manuel', 'Manuel'], ['constate', 'Constaté'], ['scenarios', 'Scénarios']].map(([m, l]) =>
+                  `<button type="button" role="radio" data-action="return-mode" data-mode="${m}" aria-checked="${m === this.returnMode}">${l}</button>`).join('')}
+              </div>
+              <p class="hint" id="return-hint"></p>` : ''}
             <div class="chart-box"><canvas id="savings-chart" role="img" aria-label="Graphique : réel, projection et versements seuls"></canvas></div>
             <table class="proj-table">
               <thead><tr><th>Horizon</th><th>Capital</th><th>Versements</th><th>Intérêts</th></tr></thead>
               <tbody id="proj-body"></tbody>
             </table>
             <p class="hint">Capital = solde actuel (${money(total)}) + versements + intérêts/plus-values.
-              Calcul mensuel simplifié : solde × (1 + taux/12) + versement, versement arrêté au plafond.</p>
+              Calcul mensuel simplifié : solde × (1 + taux/12) + versement, versement arrêté au plafond.
+              ${Object.keys(this.vals).length ? '<br><strong>Valeur indicative, rendements passés non garantis.</strong>' : ''}</p>
           </div>
 
           <div class="card">
@@ -1831,9 +2086,13 @@
         const info = typeInfo(a.type);
         const meta = [info.label, fmtPct(a.annual_rate), `${money(a.monthly_contribution)}/mois`];
         if (a.cap !== null) meta.push(`plafond ${fmtEUR0.format(a.cap)}`);
-        const tags = [];
+        const v = this.vals[a.id];
+        if (v) meta.splice(1, 1, v.complete ? 'valeur du jour' : 'prix manquant');
+        const tags = [a.scope === 'commun' ? '<span class="tag tag-third">Commun</span>' : '<span class="tag">Privé</span>'];
         if (info.locked) tags.push('<span class="tag tag-warn">Bloqué 5 ans</span>');
-        if (a.cap !== null && Number(a.balance) >= Number(a.cap)) tags.push('<span class="tag tag-warn">Plafond atteint</span>');
+        if (info.peaRule) tags.push('<span class="tag tag-warn">Retrait avant 5 ans : avantage fiscal perdu</span>');
+        if (v && v.complete && v.pnlPct !== null) tags.push(`<span class="tag ${v.pnl >= 0 ? 'tag-auto' : 'tag-pending'}">${v.pnl >= 0 ? '+' : '−'}${fmtEUR0.format(Math.abs(v.pnl))} (${fmtPercent.format(v.pnlPct)})</span>`);
+        if (a.cap !== null && !info.capOnContributions && Number(a.balance) >= Number(a.cap)) tags.push('<span class="tag tag-warn">Plafond atteint</span>');
         return `
           <li><button type="button" class="acc-row" data-action="edit-account" data-id="${a.id}">
             <span>
@@ -1845,21 +2104,52 @@
           </button></li>`;
       },
 
+      // Comptes prêts pour la projection : valeur réelle du jour ; pour les comptes à positions,
+      // rendement selon le mode (manuel / constaté / scénario n° i) ; PEA : plafond sur les versements.
+      projectionAccounts(scenarioIdx = 1) {
+        return this.accounts.map((a) => {
+          const v = this.vals[a.id];
+          const out = { ...a };
+          if (typeInfo(a.type).capOnContributions) {
+            out.cap_on_contributions = true;
+            out.contributions_base = v ? v.invested : (a.stored_balance ?? a.balance);
+          }
+          if (v && v.complete) {
+            if (this.returnMode === 'constate' && v.cagr !== null) out.annual_rate = v.cagr * 100;
+            if (this.returnMode === 'scenarios') out.annual_rate = v.scenario[scenarioIdx];
+          }
+          return out;
+        });
+      },
+
       // Recalcule tableau, graphique et alertes (horizon, curseur ou compte choisi changés).
       updateProjection() {
         const extra = this.extra.amount > 0 && this.extra.accountId ? this.extra : null;
-        const full = projectSavings(this.accounts, 20 * 12, extra);
+        const full = projectSavings(this.projectionAccounts(1), 20 * 12, extra);
+        const hasVals = Object.keys(this.vals).length > 0;
+        const range = hasVals && this.returnMode === 'scenarios'
+          ? [0, 2].map((i) => projectSavings(this.projectionAccounts(i), 20 * 12, extra)) : null;
         $('proj-body').innerHTML = HORIZONS.map((y) => {
           const p = full.points[y * 12];
           return `<tr class="${y === this.horizon ? 'is-current' : ''}">
-            <td>${years(y)}</td><td>${fmtEUR0.format(p.total)}</td>
+            <td>${years(y)}</td><td>${fmtEUR0.format(p.total)}${range
+              ? `<span class="delta muted">${fmtCompact.format(range[0].points[y * 12].total)}–${fmtCompact.format(range[1].points[y * 12].total)} €</span>` : ''}</td>
             <td>${fmtEUR0.format(p.contributed)}</td><td>${fmtEUR0.format(p.interest)}</td></tr>`;
         }).join('');
-        this.drawChart(full);
+        if (hasVals && $('return-hint')) {
+          const withVals = this.accounts.filter((a) => this.vals[a.id]);
+          $('return-hint').textContent = this.returnMode === 'manuel'
+            ? 'Taux saisi sur chaque compte, appliqué à la valeur du jour.'
+            : this.returnMode === 'constate'
+              ? withVals.map((a) => { const v = this.vals[a.id];
+                  return `${a.name} : ${v.cagr === null ? 'trop récent ou date d’achat manquante → taux saisi' : fmtPercent.format(v.cagr) + '/an constaté'}`; }).join(' · ')
+              : 'Zone colorée = pessimiste → optimiste (ETF 2 / 5 / 8 %, actions 0 / 5 / 10 %, crypto −15 / 5 / 25 % par an). Tableau : central, puis fourchette.';
+        }
+        this.drawChart(full, range);
         this.renderAlerts(full);
       },
 
-      drawChart(full) {
+      drawChart(full, range = null) {
         const canvas = $('savings-chart');
         if (!canvas || !window.Chart) return;
         const now = monthStart();
@@ -1868,7 +2158,7 @@
         for (const sn of this.snapshots) realByMonth.set(sn.month, (realByMonth.get(sn.month) || 0) + Number(sn.balance));
         const first = this.snapshots.length ? parseMonth(this.snapshots[0].month) : now;
         const from = Math.min(0, monthsBetween(now, first));
-        const labels = [], real = [], proj = [], contrib = [];
+        const labels = [], real = [], proj = [], contrib = [], low = [], high = [];
         for (let i = from; i <= this.horizon * 12; i++) {
           const d = addMonths(now, i);
           labels.push(fmtMonthShort.format(d));
@@ -1877,17 +2167,26 @@
           const p = i >= 0 ? full.points[i] : null;
           proj.push(p ? p.total : null);
           contrib.push(p ? full.start + p.contributed : null);
+          low.push(range && i >= 0 ? range[0].points[i].total : null);
+          high.push(range && i >= 0 ? range[1].points[i].total : null);
         }
-        const c = { space: cssVar('--space'), text: cssVar('--text'), muted: cssVar('--muted'), border: cssVar('--border') };
+        const c = { space: cssVar('--space'), text: cssVar('--text'), muted: cssVar('--muted'), border: cssVar('--border'),
+                    range: cssVar(state.space === 'perso' ? '--wool' : '--accent') };
         const data = {
           labels,
           datasets: [
             { label: 'Réel (relevés)', data: real, borderColor: c.text, backgroundColor: c.text,
               pointRadius: 3, pointHoverRadius: 5, borderWidth: 2, spanGaps: true, pointStyle: 'circle' },
             { label: 'Projection', data: proj, borderColor: c.space, backgroundColor: withAlpha(c.space, 0.12),
-              fill: '+1', pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.5, pointStyle: 'circle' },
+              fill: range ? false : '+1', pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.5, pointStyle: 'circle' },
             { label: 'Versements seuls', data: contrib, borderColor: c.muted, backgroundColor: c.muted,
               borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 3, borderWidth: 1.5, fill: false, pointStyle: 'line' },
+            ...(range ? [
+              { label: 'Pessimiste', data: low, borderColor: withAlpha(c.range, 0.7), backgroundColor: withAlpha(c.range, 0.7),
+                borderWidth: 1, pointRadius: 0, pointHoverRadius: 3, fill: false, pointStyle: 'line' },
+              { label: 'Optimiste', data: high, borderColor: withAlpha(c.range, 0.7), backgroundColor: withAlpha(c.range, 0.2),
+                borderWidth: 1, pointRadius: 0, pointHoverRadius: 3, fill: '-1', pointStyle: 'rect' },
+            ] : []),
           ],
         };
         if (this.chart) { this.chart.data = data; this.chart.update('none'); return; }
@@ -1946,6 +2245,11 @@
         if (locked.length) items.push(['info', `<strong>${locked.map((a) => esc(a.name)).join(', ')}</strong> : sommes bloquées 5 ans
           (sauf cas de déblocage anticipé), à ne pas compter dans le fonds d’urgence.`]);
 
+        // 3 bis. PEA : avantage fiscal
+        const peas = this.accounts.filter((a) => typeInfo(a.type).peaRule);
+        if (peas.length) items.push(['info', `<strong>${peas.map((a) => esc(a.name)).join(', ')}</strong> : plafond de 150 000 € de versements ;
+          un retrait avant 5 ans fait perdre l’avantage fiscal.`]);
+
         // 4. Rendements boursiers = hypothèses
         const risky = this.accounts.filter((a) => typeInfo(a.type).risky);
         items.push(['info', `<strong>Hypothèses</strong> : ${risky.length
@@ -1962,13 +2266,14 @@
         $('acc-title').textContent = acc ? 'Modifier le compte' : (state.space === 'perso' ? 'Nouveau compte' : 'Nouveau compte commun');
         $('acc-name').value = acc ? acc.name : '';
         $('acc-type').value = acc && ACCOUNT_TYPES[acc.type] ? acc.type : (acc ? 'autre' : 'courant');
-        $('acc-balance').value = acc ? numToInput(acc.balance) : '';
+        $('acc-balance').value = acc ? numToInput(acc.stored_balance ?? acc.balance) : '';
         $('acc-monthly').value = acc ? numToInput(acc.monthly_contribution) : '';
         $('acc-rate').value = acc ? numToInput(acc.annual_rate) : '';
         $('acc-cap').value = acc ? numToInput(acc.cap) : '';
         $('acc-delete').hidden = !acc;
         this.prevType = $('acc-type').value;
-        $('acc-type-hint').textContent = typeInfo(this.prevType).hint;
+        $('acc-type-hint').textContent = typeInfo(this.prevType).hint
+          + (acc && this.vals[acc.id] ? ' Le solde affiché vient de tes positions (valeur du jour).' : '');
         setMsg($('acc-msg'), '');
         $('account-dialog').showModal();
       },
@@ -1977,13 +2282,13 @@
       onTypeChange() {
         const type = $('acc-type').value;
         const info = typeInfo(type), prev = typeInfo(this.prevType);
-        if (info.rate !== undefined) {
-          $('acc-rate').value = numToInput(info.rate);
+        if (info.rate !== undefined || info.cap !== undefined) {
+          if (info.rate !== undefined) $('acc-rate').value = numToInput(info.rate);
           $('acc-cap').value = numToInput(info.cap);
         } else if (prev.cap !== undefined) {
           // On quitte un livret : on retire ses valeurs par défaut si elles n'ont pas été modifiées.
           if (parseAmount($('acc-cap').value) === prev.cap) $('acc-cap').value = '';
-          if (parseAmount($('acc-rate').value) === prev.rate) $('acc-rate').value = '';
+          if (prev.rate !== undefined && parseAmount($('acc-rate').value) === prev.rate) $('acc-rate').value = '';
         }
         const name = $('acc-name').value.trim();
         if (type !== 'autre' && (!name || Object.values(ACCOUNT_TYPES).some((t) => t.label === name))) $('acc-name').value = info.label;
@@ -2022,6 +2327,92 @@
         try { await db.remove('ep_accounts', acc.id); }
         catch (err) { return setMsg($('acc-msg'), frError(err)); }
         $('account-dialog').close();
+        await remountAll();
+      },
+
+      // ---------- Positions des comptes d'investissement ----------
+      holdingsHTML() {
+        const invest = this.accounts.filter((a) => typeInfo(a.type).invest || this.vals[a.id]);
+        if (!invest.length) return '';
+        const when = (ms) => new Date(ms).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const priceInfo = (h) => {
+          const p = this.prices && this.prices[priceKey(h)];
+          if (!p || p.eur === null || p.eur === undefined) return `<span class="neg">Prix indisponible${p && p.error ? ' : ' + esc(p.error) : ''}</span>`;
+          return p.stale ? `<span class="neg">Dernier prix connu du ${when(p.at)}</span> (${esc(p.error)})` : `${esc(p.source)}, ${when(p.at)}`;
+        };
+        return `
+          <div class="card">
+            <div class="card-head"><h2>Positions</h2>
+              <button type="button" class="btn-small" data-action="refresh-prices">Actualiser les prix</button></div>
+            <p class="hint"><strong>Valeur indicative, rendements passés non garantis.</strong> Prix mis en cache 1 heure.</p>
+            ${invest.map((a) => {
+              const v = this.vals[a.id];
+              return `<div class="group-head"><span>${esc(a.name)}</span><span class="num">${v ? money(v.value) : '—'}</span></div>
+                ${v ? `<ul class="line-list">${v.lines.map((l) => `
+                  <li><button type="button" class="line-row" data-action="edit-holding" data-id="${l.h.id}">
+                    <span><span class="acc-name">${esc(l.h.label || l.h.symbol)} <span class="muted small">${esc(l.h.symbol)}</span></span>
+                      <span class="acc-meta">${numToInput(Number(l.h.quantity))} × ${l.price === null ? '?' : money(l.price)} · investi ${money(l.h.invested)}</span>
+                      <span class="acc-meta">${priceInfo(l.h)}</span></span>
+                    <span class="line-amount">${l.value === null ? '—' : money(l.value)}
+                      ${l.pnl === null ? '' : `<span class="delta ${l.pnl >= 0 ? 'pos' : 'neg'}">${l.pnl >= 0 ? '+' : '−'}${money(Math.abs(l.pnl))}${l.pnlPct === null ? '' : ' (' + fmtPercent.format(l.pnlPct) + ')'}</span>`}</span>
+                  </button></li>`).join('')}</ul>
+                  <div class="kv"><span>Plus-value</span><span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))}${v.pnlPct === null ? '' : ' (' + fmtPercent.format(v.pnlPct) + ')'}</span></div>
+                  <div class="kv"><span>Rendement annualisé constaté</span><span>${v.cagr === null
+                    ? (v.firstDate ? 'moins de 30 jours de recul' : 'date du 1er achat manquante')
+                    : fmtPercent.format(v.cagr) + '/an depuis le ' + new Date(v.firstDate + 'T12:00:00').toLocaleDateString('fr-FR')}</span></div>
+                  ${v.complete ? '' : '<p class="hint neg">Prix manquant : le solde saisi du compte est utilisé en attendant.</p>'}`
+                : '<p class="muted small">Aucune position : ajoute ce que contient ce compte.</p>'}
+                <button type="button" class="btn-small" data-action="add-holding" data-account="${a.id}" style="margin:8px 0 4px">+ Position</button>`;
+            }).join('')}
+          </div>`;
+      },
+
+      openHolding(id, accountId) {
+        const h = id ? Object.values(this.vals).flatMap((v) => v.holdings).find((x) => x.id === id) : null;
+        const acc = this.accounts.find((a) => a.id === (h ? h.account_id : accountId));
+        this.editingHolding = { h, acc };
+        $('hold-title').textContent = `${h ? 'Modifier la position' : 'Nouvelle position'} — ${acc.name}`;
+        $('hold-type').value = h ? h.asset_type : (acc.type === 'crypto' ? 'crypto' : 'etf');
+        $('hold-symbol').value = h ? h.symbol : '';
+        $('hold-label').value = h ? h.label || '' : '';
+        $('hold-quantity').value = h ? numToInput(Number(h.quantity)) : '';
+        $('hold-invested').value = h ? numToInput(h.invested) : '';
+        $('hold-date').value = h && h.first_purchase ? h.first_purchase : '';
+        $('hold-delete').hidden = !h;
+        syncHoldingHint();
+        setMsg($('hold-msg'), '');
+        $('holding-dialog').showModal();
+      },
+
+      async saveHolding(form) {
+        const msg = $('hold-msg');
+        const { h, acc } = this.editingHolding;
+        const asset_type = $('hold-type').value;
+        const symbol = $('hold-symbol').value.trim();
+        const quantity = parseAmount($('hold-quantity').value);
+        const investedRaw = $('hold-invested').value.trim();
+        const invested = investedRaw === '' ? 0 : parseAmount(investedRaw);
+        if (!symbol) return setMsg(msg, asset_type === 'crypto' ? 'Indique l’identifiant CoinGecko (ex. bitcoin).' : 'Indique le symbole (ex. CW8.PA) ou l’ISIN.');
+        if (quantity === null || quantity <= 0) return setMsg(msg, 'Indique la quantité (ex. 0,01).');
+        if (invested === null || invested < 0) return setMsg(msg, 'Montant investi illisible.');
+        const row = { asset_type, symbol: asset_type === 'crypto' ? symbol.toLowerCase() : symbol.toUpperCase(),
+                      label: $('hold-label').value.trim() || null, quantity, invested, first_purchase: $('hold-date').value || null };
+        await withBusy(form, async () => {
+          try {
+            if (h) await db.update('ep_holdings', h.id, row);
+            else await db.insert('ep_holdings', { ...row, account_id: acc.id }, { space: acc.scope });
+          } catch (err) { return setMsg(msg, frError(err)); }
+          $('holding-dialog').close();
+          await remountAll();
+        });
+      },
+
+      async removeHolding() {
+        const { h } = this.editingHolding;
+        if (!h || !confirm(`Supprimer la position ${h.symbol} ?`)) return;
+        try { await db.remove('ep_holdings', h.id); }
+        catch (err) { return setMsg($('hold-msg'), frError(err)); }
+        $('holding-dialog').close();
         await remountAll();
       },
 
@@ -2098,9 +2489,12 @@
         const now = new Date().toISOString();   // created_at réécrit = date du dernier relevé
         try {
           await db.upsert('ep_balance_snapshots',
-            this.accounts.map((a) => ({ account_id: a.id, month: isoMonth(month), balance: a.balance, created_at: now })),
+            this.accounts.map((a) => ({ account_id: a.id, month: isoMonth(month), balance: Math.round(a.balance * 100) / 100, created_at: now })),
             { onConflict: 'account_id,month' });
-          await this.mount(this.root);
+          // Comptes à positions : le solde enregistré devient la valeur réelle du jour
+          await Promise.all(Object.entries(this.vals).filter(([, v]) => v.complete)
+            .map(([id, v]) => db.update('ep_accounts', id, { balance: Math.round(v.value * 100) / 100 })));
+          await remountAll();   // la Vue d'ensemble affiche aussi le rappel de relevé
           setMsg($('savings-msg'), `Soldes de ${fmtMonth.format(month)} enregistrés.`, 'ok');
         } catch (err) {
           setMsg($('savings-msg'), frError(err));
@@ -2117,6 +2511,15 @@
     $('acc-cancel').addEventListener('click', () => $('account-dialog').close());
     $('acc-delete').addEventListener('click', () => Savings.remove());
     $('snap-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveSnap(e.target); });
+    function syncHoldingHint() {
+      $('hold-symbol-hint').textContent = $('hold-type').value === 'crypto'
+        ? 'Identifiant CoinGecko, ex. bitcoin, ethereum, solana.'
+        : 'Ticker avec sa place de cotation (ex. CW8.PA, IWDA.AS) ou ISIN. Prix via Twelve Data (clé dans Réglages).';
+    }
+    $('hold-type').addEventListener('change', syncHoldingHint);
+    $('holding-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveHolding(e.target); });
+    $('hold-cancel').addEventListener('click', () => $('holding-dialog').close());
+    $('hold-delete').addEventListener('click', () => Savings.removeHolding());
     $('snap-cancel').addEventListener('click', () => $('snap-dialog').close());
     $('snap-delete').addEventListener('click', () => Savings.removeSnap());
     // Changement de thème : on redessine le graphique avec les nouvelles couleurs.
@@ -3392,12 +3795,14 @@
           ]);
           // Mon perso + le commun uniquement. La RLS bloque déjà le perso de l'autre ; on filtre aussi ici par prudence.
           const mineOrCommon = (r) => r.scope === 'commun' || r.user_id === me;
-          const accounts = accountsAll.filter(mineOrCommon);
+          // Valeur réelle du jour pour les comptes à positions
+          const real = await loadRealAccounts(accountsAll.filter(mineOrCommon));
+          const accounts = real.accounts;
           const goals = goalsAll.filter(mineOrCommon);
           const snapshots = accounts.length
             ? await db.list('ep_balance_snapshots', { filters: { account_id: accounts.map((a) => a.id) }, order: 'month' }) : [];
           if (token !== this.loadToken) return;
-          this.data = { accounts, perso, commun, goals, snapshots };
+          this.data = { accounts, vals: real.vals, perso, commun, goals, snapshots };
           this.render();
         } catch (err) {
           if (token === this.loadToken) root.innerHTML = `<p class="msg error">Erreur de chargement : ${esc(frError(err))}</p>`;
@@ -3415,7 +3820,7 @@
       },
 
       render() {
-        const { accounts, perso, commun, goals, snapshots } = this.data;
+        const { accounts, vals, perso, commun, goals, snapshots } = this.data;
         const tab = TABS.find((t) => t.id === 'apercu');
         const nothing = !accounts.length && !perso.plan.budget.total && !commun.plan.budget.total && !goals.length && !perso.plan.loans.length;
         if (nothing) {
@@ -3424,50 +3829,56 @@
         }
         const now = monthStart();
         const nowAbs = absMonth(isoMonth(now));
-        const total = sumBy(accounts, (a) => a.balance);
-        const monthly = sumBy(accounts, (a) => a.monthly_contribution);
-        const spaces = [['perso', 'Mon espace', perso], ['commun', 'Commun', commun]];
+        const mine = accounts.filter((a) => a.scope === 'perso');
+        const common = accounts.filter((a) => a.scope === 'commun');
+        const totalMine = sumBy(mine, (a) => a.balance);
+        const totalCommon = sumBy(common, (a) => a.balance);
+        const share = commonShare() / 100;
+        const partner = (state.members.find((m) => m.user_id !== state.user.id) || {}).first_name || 'le foyer';
 
         // Rappel « Relever les soldes » : comptes sans relevé ce mois-ci, par espace
         const thisMonth = isoMonth(now);
         const done = new Set(snapshots.filter((sn) => sn.month === thisMonth).map((sn) => sn.account_id));
-        const reminders = spaces.map(([sp, label]) => {
-          const missing = accounts.filter((a) => a.scope === sp && !done.has(a.id)).length;
+        const reminders = [['perso', 'Mon patrimoine', mine], ['commun', 'le compte commun', common]].map(([sp, label, list]) => {
+          const missing = list.filter((a) => !done.has(a.id)).length;
           return missing ? `<li class="warn">Relevé de ${fmtMonth.format(now)} pas encore fait pour <strong>${label}</strong>
             (${missing} compte${missing > 1 ? 's' : ''}).<button type="button" class="link-btn" data-go="${sp}:epargne">Relever les soldes</button></li>` : '';
         }).join('');
 
-        // Répartition du patrimoine par compte
-        const allocation = spaces.map(([sp, label]) => {
-          const list = accounts.filter((a) => a.scope === sp).sort((a, b) => b.balance - a.balance);
-          if (!list.length) return '';
-          return `<div class="group-head"><span>${label}</span><span class="num">${money(sumBy(list, (a) => a.balance))}</span></div>
-            ${list.map((a) => {
-              const share = total > 0 ? Number(a.balance) / total : 0;
-              return `<div class="cat-row">
-                <div class="cat-top"><span class="cat-name">${esc(a.name)}</span><span class="cat-figs"><strong>${money(a.balance)}</strong></span></div>
-                <div class="bar done"><span style="width:${Math.max(0, share * 100)}%"></span></div>
-                <div class="cat-sub"><span>${typeInfo(a.type).label}</span><span>${fmtPercent.format(share)}</span></div>
-              </div>`;
-            }).join('')}`;
-        }).join('');
-
-        // Projection combinée
-        const proj = projectSavings(accounts, 240);
-
-        // Ce mois-ci : réel vs prévu et reste à vivre, par espace
-        const monthBlocks = spaces.map(([sp, label, m]) => {
+        // Un bloc : comptes (badge Privé / Commun), projection, mois en cours
+        const block = (sp, title, badge, list, total, m) => {
+          const proj = projectSavings(list.map((a) => (typeInfo(a.type).capOnContributions
+            ? { ...a, cap_on_contributions: true, contributions_base: vals[a.id] ? vals[a.id].invested : a.balance } : a)), 240);
           const r = m.result;
           const ratio = r.planned > 0 ? r.real / r.planned : (r.real > 0 ? Infinity : 0);
           const level = ratio > 1 ? 'over' : ratio >= 0.9 ? 'near' : 'ok';
-          return `<div class="space-block">
-            <div class="cat-top"><span class="cat-name">${label}</span>
-              <span class="cat-figs"><strong>${money(r.real)}</strong> / ${money(r.planned)}</span></div>
-            <div class="bar ${level}"><span style="width:${Math.min(100, ratio === Infinity ? 100 : ratio * 100)}%"></span></div>
-            <div class="cat-sub"><span>Reste à vivre prévu : <strong class="${m.plan.budget.rest < 0 ? 'neg' : ''}">${money(m.plan.budget.rest)}</strong></span>
-              <button type="button" class="link-btn" data-go="${sp}:depenses">Dépenses</button></div>
-          </div>`;
-        }).join('');
+          return `
+            <section class="card">
+              <div class="card-head"><h2>${title}</h2>${badge}</div>
+              <p class="kpi-value num" style="margin:4px 0 8px">${money(total)}</p>
+              ${list.length ? list.slice().sort((x, y) => y.balance - x.balance).map((a) => {
+                const v = vals[a.id];
+                const pct = total > 0 ? Number(a.balance) / total : 0;
+                return `<div class="cat-row">
+                  <div class="cat-top"><span class="cat-name">${esc(a.name)}</span><span class="cat-figs"><strong>${money(a.balance)}</strong></span></div>
+                  <div class="bar done"><span style="width:${Math.max(0, pct * 100)}%"></span></div>
+                  <div class="cat-sub"><span>${sp === 'perso' ? '<span class="tag">Privé</span>' : '<span class="tag tag-third">Commun</span>'}
+                    ${typeInfo(a.type).label}${v && v.complete && v.pnlPct !== null
+                      ? ` · <span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${fmtPercent.format(Math.abs(v.pnlPct))}</span>` : ''}</span>
+                    <span>${fmtPercent.format(pct)}</span></div>
+                </div>`;
+              }).join('') : '<p class="muted">Aucun compte pour l’instant.</p>'}
+
+              ${list.length ? `<div class="group-head"><span>Projection</span><span>capital</span></div>
+                ${HORIZONS.map((y) => `<div class="kv"><span>${years(y)}</span><span>${fmtEUR0.format(proj.points[y * 12].total)}</span></div>`).join('')}` : ''}
+
+              <div class="group-head"><span>Mois en cours</span><span>${fmtMonth.format(now)}</span></div>
+              <div class="cat-top"><span>Réel / prévu</span><span class="cat-figs"><strong>${money(r.real)}</strong> / ${money(r.planned)}</span></div>
+              <div class="bar ${level}"><span style="width:${Math.min(100, ratio === Infinity ? 100 : ratio * 100)}%"></span></div>
+              <div class="cat-sub"><span>Reste à vivre prévu : <strong class="${m.plan.budget.rest < 0 ? 'neg' : ''}">${money(m.plan.budget.rest)}</strong></span>
+                <button type="button" class="link-btn" data-go="${sp}:depenses">Dépenses</button></div>
+            </section>`;
+        };
 
         // Prochaines échéances : prêts (ma part) + objectifs les plus proches
         const loanItems = perso.plan.loans.map((l) => {
@@ -3478,45 +3889,32 @@
         }).join('');
         const goalItems = goals.map((g) => ({ g, p: goalProgress(g, nowAbs) }))
           .filter((x) => x.p.status !== 'atteint' && x.g.due_date)
-          .sort((a, b) => a.g.due_date.localeCompare(b.g.due_date)).slice(0, 3)
-          .map(({ g, p }) => `<div class="kv"><span>${esc(g.name)} <span class="muted small">· ${g.scope === 'commun' ? 'Commun' : 'Moi'}</span><br>
+          .sort((x, y) => x.g.due_date.localeCompare(y.g.due_date)).slice(0, 3)
+          .map(({ g, p }) => `<div class="kv"><span>${esc(g.name)} <span class="muted small">· ${g.scope === 'commun' ? 'Commun' : 'Privé'}</span><br>
               <span class="muted small">${fmtMonth.format(parseMonth(g.due_date))} · ${GOAL_STATUS[p.status][1].toLowerCase()}</span></span>
             <span>${money(p.monthlyNeeded)}/mois</span></div>`).join('');
 
         this.root.innerHTML = `
           ${reminders ? `<ul class="alerts" style="margin-top:16px">${reminders}</ul>` : ''}
           <div class="kpis">
-            <div class="kpi"><div class="kpi-label">Patrimoine</div>
-              <div class="kpi-value num">${money(total)}</div><div class="kpi-label">mes comptes + comptes communs</div></div>
-            <div class="kpi"><div class="kpi-label">Épargne / mois</div>
-              <div class="kpi-value num">${money(monthly)}</div><div class="kpi-label">versements prévus</div></div>
-            <div class="kpi"><div class="kpi-label">Reste à vivre</div>
-              <div class="kpi-value num ${perso.plan.budget.rest < 0 ? 'neg' : ''}">${money(perso.plan.budget.rest)}</div><div class="kpi-label">Mon espace, ce mois</div></div>
+            <div class="kpi"><div class="kpi-label">Moi + ma part du commun</div>
+              <div class="kpi-value num">${money(totalMine + share * totalCommon)}</div>
+              <div class="kpi-label">${fmtEUR0.format(totalMine)} à moi + ${fmtPercent.format(share)} de ${fmtEUR0.format(totalCommon)} (réglable dans Réglages)</div></div>
+            <div class="kpi"><div class="kpi-label">Mon patrimoine</div>
+              <div class="kpi-value num">${money(totalMine)}</div><div class="kpi-label">privé</div></div>
+            <div class="kpi"><div class="kpi-label">Compte commun</div>
+              <div class="kpi-value num">${money(totalCommon)}</div><div class="kpi-label">avec ${esc(partner)}</div></div>
           </div>
 
-          ${accounts.length ? `<div class="card"><h2>Répartition du patrimoine</h2>${allocation}</div>
-
-          <div class="card">
-            <h2>Projection combinée</h2>
-            <table class="proj-table">
-              <thead><tr><th>Horizon</th><th>Capital</th><th>Versements</th><th>Intérêts</th></tr></thead>
-              <tbody>${HORIZONS.map((y) => { const p = proj.points[y * 12]; return `<tr><td>${years(y)}</td>
-                <td>${fmtEUR0.format(p.total)}</td><td>${fmtEUR0.format(p.contributed)}</td><td>${fmtEUR0.format(p.interest)}</td></tr>`; }).join('')}</tbody>
-            </table>
-            <p class="hint">Mes comptes et les comptes communs, avec leurs versements actuels. Détail et simulation dans Épargne.</p>
-          </div>` : ''}
-
-          <div class="card">
-            <h2>Ce mois-ci · ${fmtMonth.format(now)}</h2>
-            ${monthBlocks}
-            <p class="hint">Réel / prévu (ma part : hors dépenses payées par des tiers).</p>
-          </div>
+          ${block('perso', 'Mon patrimoine', '<span class="tag">Privé</span>', mine, totalMine, perso)}
+          ${block('commun', 'Compte commun', `<span class="tag tag-third">Partagé avec ${esc(partner)}</span>`, common, totalCommon, commun)}
 
           ${loanItems || goalItems ? `<div class="card">
             <h2>Prochaines échéances</h2>
             ${loanItems ? `<div class="group-head"><span>Prêts</span></div>${loanItems}` : ''}
             ${goalItems ? `<div class="group-head"><span>Objectifs</span><span>à mettre de côté</span></div>${goalItems}` : ''}
-          </div>` : ''}`;
+          </div>` : ''}
+          ${Object.keys(vals).length ? '<p class="hint">Comptes à positions : valeur indicative du jour, rendements passés non garantis. Projections avec les taux saisis (scénarios dans Épargne).</p>' : ''}`;
       },
     };
 
@@ -3534,6 +3932,46 @@
         await refresh();
         setMsg(msg, 'Prénom enregistré.', 'ok');
       });
+    });
+
+    // Part du commun (ep_members.common_share, 50 % par défaut)
+    const commonShare = () => (state.member && state.member.common_share !== undefined && state.member.common_share !== null
+      ? Number(state.member.common_share) : 50);
+    $('form-share').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const msg = $('share-msg');
+      const value = parseAmount($('set-share').value);
+      if (value === null || value < 0 || value > 100) return setMsg(msg, 'Indique un pourcentage entre 0 et 100.');
+      withBusy(e.target, async () => {
+        const { data, error } = await sb.from('ep_members')
+          .update({ common_share: value }).eq('user_id', state.user.id).select();
+        if (error) return setMsg(msg, frError(error));
+        if (!data.length) return setMsg(msg, 'Modification refusée.');
+        await refresh();
+        setMsg(msg, 'Part enregistrée.', 'ok');
+      });
+    });
+
+    // Clé Twelve Data : localStorage de cet appareil uniquement
+    $('form-prices').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const key = $('set-tdkey').value.trim();
+      if (!key) return setMsg($('prices-msg'), 'Colle ta clé Twelve Data.');
+      try { localStorage.setItem(TD_KEY_STORAGE, key); } catch (err) { return setMsg($('prices-msg'), 'Stockage local indisponible sur ce navigateur.'); }
+      $('set-tdkey').value = '';
+      Prices.clear();
+      setMsg($('prices-msg'), 'Clé enregistrée sur cet appareil. Les prix seront actualisés.', 'ok');
+      render();
+    });
+    $('tdkey-forget').addEventListener('click', () => {
+      try { localStorage.removeItem(TD_KEY_STORAGE); } catch (err) {}
+      setMsg($('prices-msg'), 'Clé supprimée de cet appareil.', 'ok');
+      render();
+    });
+    $('prices-clear').addEventListener('click', () => {
+      Prices.clear();
+      setMsg($('prices-msg'), 'Cache vidé : les prix seront redemandés.', 'ok');
+      render();
     });
 
     $('form-household').addEventListener('submit', (e) => {
