@@ -1,0 +1,29 @@
+# Wallet — « réveil » de la base Supabase.
+# Le projet Supabase gratuit est mis en pause après ~7 jours sans activité :
+# on interroge la base tous les 3 jours. Seule la clé publishable (publique) est utilisée.
+name: Réveil Supabase
+
+on:
+  schedule:
+    - cron: '17 6 */3 * *'   # tous les 3 jours vers 6 h 17 UTC
+  workflow_dispatch:          # bouton « Run workflow » pour tester à la main
+
+permissions: {}               # le workflow n'a besoin d'aucun droit sur le dépôt
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Interroger la base (fonction ep_ping)
+        env:
+          SUPABASE_URL: https://fycuoqqecbmbqgindjpx.supabase.co
+          SUPABASE_KEY: sb_publishable__N92eqoFrQQwO552meumWw_e6H0sGVq
+        run: |
+          status=$(curl -sS -o response.txt -w '%{http_code}' --retry 3 --retry-delay 10 \
+            -X POST "$SUPABASE_URL/rest/v1/rpc/ep_ping" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          echo "HTTP $status : $(cat response.txt)"
+          test "$status" = "200"

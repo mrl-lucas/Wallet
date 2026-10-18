@@ -81,7 +81,7 @@
       background: var(--space); color: var(--space-text); transition: background .25s;
     }
     main { max-width: 720px; margin: 0 auto; padding-bottom: 32px; }
-    #screen-loading, #screen-auth, #screen-setup { max-width: 440px; margin-inline: auto; }
+    #screen-loading, #screen-auth, #screen-setup, #screen-reset { max-width: 440px; margin-inline: auto; }
     .card {
       background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
       padding: 20px; margin-top: 16px; box-shadow: var(--shadow);
@@ -412,11 +412,27 @@
         <label for="auth-password">Mot de passe</label>
         <input id="auth-password" type="password" autocomplete="current-password" minlength="8" required>
         <button id="auth-submit" class="btn-primary" type="submit">Se connecter</button>
+        <button id="auth-forgot" class="link-btn" type="button" style="margin-top:8px">Mot de passe oublié ?</button>
         <p id="auth-msg" class="msg" role="status"></p>
       </form>
     </section>
 
     <!-- Pas encore de foyer -->
+    <!-- Retour par le lien « Mot de passe oublié » -->
+    <section id="screen-reset" class="card" hidden>
+      <h1>Nouveau mot de passe</h1>
+      <p class="muted">Choisis un nouveau mot de passe pour <strong id="reset-email"></strong>.</p>
+      <form id="form-reset" novalidate>
+        <label for="reset-password">Nouveau mot de passe</label>
+        <input id="reset-password" type="password" autocomplete="new-password" minlength="8" required>
+        <label for="reset-password2">Confirmer</label>
+        <input id="reset-password2" type="password" autocomplete="new-password" minlength="8" required>
+        <button class="btn-primary" type="submit">Enregistrer le mot de passe</button>
+        <p id="reset-msg" class="msg" role="status"></p>
+      </form>
+      <button type="button" class="link-btn" data-logout>Annuler et se déconnecter</button>
+    </section>
+
     <section id="screen-setup" hidden>
       <div class="card">
         <h1>Bienvenue <span data-firstname></span> 👋</h1>
@@ -774,6 +790,9 @@
     // Clé publishable = publique par nature : la sécurité repose sur la RLS côté base.
     const SUPABASE_URL = 'https://fycuoqqecbmbqgindjpx.supabase.co';
     const SUPABASE_KEY = 'sb_publishable__N92eqoFrQQwO552meumWw_e6H0sGVq';
+    // Lien reçu par e-mail : à lire avant que supabase-js ne nettoie l'adresse.
+    const RECOVERY_LINK = /type=recovery/.test(location.hash + location.search);
+    const AUTH_LINK_ERROR = /error_code=otp_expired|error=access_denied/.test(location.hash + location.search);
     const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const $ = (id) => document.getElementById(id);
@@ -781,6 +800,7 @@
       user: null, member: null, household: null, members: [],
       space: 'perso',      // espace actif : 'perso' (Mon espace) ou 'commun'
       tab: 'apercu',       // onglet actif
+      recovery: RECOVERY_LINK, // arrivé par « Mot de passe oublié » : choisir un nouveau mot de passe d'abord
     };
     try { if (localStorage.getItem('ep_space') === 'commun') state.space = 'commun'; } catch (e) {}
 
@@ -815,7 +835,7 @@
 
     // ================== Utilitaires d'affichage ==================
     function show(screen) {
-      for (const s of ['loading', 'auth', 'setup', 'home']) $('screen-' + s).hidden = s !== screen;
+      for (const s of ['loading', 'auth', 'reset', 'setup', 'home']) $('screen-' + s).hidden = s !== screen;
     }
     function setMsg(el, text, type = 'error') {
       el.textContent = text || '';
@@ -836,6 +856,8 @@
       if (/Signups not allowed/i.test(m))       return 'Les inscriptions sont fermées.';
       if (/rate limit/i.test(m))                return 'Trop de tentatives, réessaie dans quelques minutes.';
       if (/Failed to fetch/i.test(m))           return 'Pas de connexion au serveur.';
+      if (/should be different from the old/i.test(m)) return 'Choisis un mot de passe différent de l’ancien.';
+      if (/For security purposes/i.test(m))     return 'Patiente quelques secondes avant de redemander un lien.';
       return m;
     }
     function firstName() {
@@ -1242,6 +1264,7 @@
       $('field-firstname').hidden = mode !== 'signup';
       $('auth-password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
       $('auth-submit').textContent = mode === 'signup' ? 'Créer mon compte' : 'Se connecter';
+      $('auth-forgot').hidden = mode === 'signup';
       setMsg($('auth-msg'), '');
     }
     $('tab-login').addEventListener('click', () => setAuthMode('login'));
@@ -1281,6 +1304,39 @@
       });
     });
 
+    // ---------- Mot de passe oublié ----------
+    $('auth-forgot').addEventListener('click', async () => {
+      const msg = $('auth-msg');
+      const email = $('auth-email').value.trim();
+      if (!email) { $('auth-email').focus(); return setMsg(msg, 'Saisis ton e-mail, puis clique sur « Mot de passe oublié ? ».'); }
+      $('auth-forgot').disabled = true;
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      $('auth-forgot').disabled = false;
+      if (error) return setMsg(msg, frError(error));
+      // Même message que le compte existe ou non (on ne révèle pas quels e-mails sont inscrits).
+      setMsg(msg, 'Si un compte existe pour cet e-mail, un lien vient d’être envoyé. Pense à vérifier les spams.', 'ok');
+    });
+
+    $('form-reset').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const msg = $('reset-msg');
+      const password = $('reset-password').value;
+      if (password.length < 8) return setMsg(msg, 'Mot de passe : 8 caractères minimum.');
+      if (password !== $('reset-password2').value) return setMsg(msg, 'Les deux mots de passe ne sont pas identiques.');
+      withBusy(e.target, async () => {
+        const { error } = await sb.auth.updateUser({ password });
+        if (error) return setMsg(msg, frError(error));
+        state.recovery = false;
+        e.target.reset();
+        try { history.replaceState(null, '', location.pathname); } catch (err) {}
+        await refresh();
+      });
+    });
+    if (AUTH_LINK_ERROR) {
+      setMsg($('auth-msg'), 'Ce lien a expiré ou a déjà servi : redemande un lien avec « Mot de passe oublié ? ».');
+      try { history.replaceState(null, '', location.pathname); } catch (err) {}
+    }
+
     document.querySelectorAll('[data-logout]').forEach((b) =>
       b.addEventListener('click', () => sb.auth.signOut()));
 
@@ -1312,6 +1368,10 @@
       fillNames();
       if (!state.user || !state.household) delete document.documentElement.dataset.space;
       if (!state.user) return show('auth');
+      if (state.recovery) {
+        $('reset-email').textContent = state.user.email;
+        return show('reset');
+      }
       if (!state.household) return show('setup');
 
       $('home-household').textContent = state.household.name;
@@ -3493,8 +3553,14 @@
 
     // ================== Démarrage ==================
     let lastUserId;
-    sb.auth.onAuthStateChange((_event, session) => {
+    sb.auth.onAuthStateChange((event, session) => {
       const user = session ? session.user : null;
+      // Retour par le lien « Mot de passe oublié » : afficher l'écran du nouveau mot de passe.
+      if (event === 'SIGNED_OUT') state.recovery = false;
+      if (event === 'PASSWORD_RECOVERY' && !state.recovery) {
+        state.recovery = true;
+        if (user && user.id === lastUserId) { setTimeout(render, 0); return; }
+      }
       // Ne recharge que si l'utilisateur change (évite de recharger à chaque rafraîchissement de jeton).
       if ((user && user.id) === lastUserId) return;
       lastUserId = user && user.id;
