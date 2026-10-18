@@ -35,24 +35,24 @@ begin
 
   select count(*) into v_n from public.ep_holdings where user_id = v_lucas;
   if v_n <> 0 then raise exception 'ÉCHEC : Célia voit % position(s) de Lucas', v_n; end if;
-  v_report := v_report || 'OK 1 — lecture : Célia ne voit aucune position de Lucas';
+  v_report := array_append(v_report, 'OK 1 — lecture : Célia ne voit aucune position de Lucas'::text);
 
   update public.ep_holdings set quantity = 999 where user_id = v_lucas;
   get diagnostics v_n = row_count;
   if v_n <> 0 then raise exception 'ÉCHEC : Célia a modifié % position(s) de Lucas', v_n; end if;
-  v_report := v_report || 'OK 2 — modification : 0 ligne touchée';
+  v_report := array_append(v_report, 'OK 2 — modification : 0 ligne touchée'::text);
 
   delete from public.ep_holdings where user_id = v_lucas;
   get diagnostics v_n = row_count;
   if v_n <> 0 then raise exception 'ÉCHEC : Célia a supprimé % position(s) de Lucas', v_n; end if;
-  v_report := v_report || 'OK 3 — suppression : 0 ligne touchée';
+  v_report := array_append(v_report, 'OK 3 — suppression : 0 ligne touchée'::text);
 
   begin
     insert into public.ep_holdings (household_id, scope, user_id, account_id, asset_type, symbol, quantity)
     values (v_hh, 'perso', v_celia, v_acc, 'etf', 'CW8.PA', 1);
     raise exception 'ÉCHEC : Célia a pu ajouter une position dans le compte de Lucas';
   exception when insufficient_privilege then
-    v_report := v_report || 'OK 4 — ajout dans le compte de Lucas : refusé par la RLS';
+    v_report := array_append(v_report, 'OK 4 — ajout dans le compte de Lucas : refusé par la RLS'::text);
   end;
 
   -- ---------- Contrôle positif : Lucas voit bien sa propre position ----------
@@ -61,7 +61,7 @@ begin
   set local role authenticated;
   select count(*) into v_n from public.ep_holdings where account_id = v_acc;
   if v_n <> 1 then raise exception 'ÉCHEC : Lucas devrait voir sa position (vu : %)', v_n; end if;
-  v_report := v_report || 'OK 5 — Lucas voit bien sa propre position';
+  v_report := array_append(v_report, 'OK 5 — Lucas voit bien sa propre position'::text);
 
   -- ---------- Nettoyage (en administrateur) ----------
   reset role;
