@@ -368,6 +368,9 @@
     .loan-card[aria-pressed="true"] { background: var(--space-soft); border-radius: 10px; padding-left: 8px; padding-right: 8px; }
     .income-sum { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font-variant-numeric: tabular-nums; font-size: .94rem; }
 
+    .proj-sentence { font: 500 1.05rem/1.45 var(--font-display); margin: 0 0 12px; }
+    .proj-sentence strong { color: var(--space); }
+
     /* ---------- Vue d'ensemble ---------- */
     .group-head { display: flex; justify-content: space-between; margin: 14px 0 2px; font-size: .76rem; font-weight: 700;
                   text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -587,15 +590,34 @@
             <option value="auto">Prix automatique</option>
           </select>
           <p id="hold-symbol-hint" class="hint"></p>
-          <div id="hold-manual-box" class="grid2">
-            <div>
-              <label for="hold-value">Valeur actuelle (€)</label>
-              <input id="hold-value" inputmode="decimal" autocomplete="off" placeholder="ex. 13 200">
+          <div id="hold-manual-box">
+            <div class="grid2">
+              <div>
+                <label for="hold-value">Valeur actuelle (€)</label>
+                <input id="hold-value" inputmode="decimal" autocomplete="off" placeholder="ex. 13 200">
+              </div>
+              <div>
+                <label for="hold-value-date">Au</label>
+                <input id="hold-value-date" type="date">
+              </div>
+              <div>
+                <label for="hold-pnl">ou plus-value (€)</label>
+                <input id="hold-pnl" inputmode="decimal" autocomplete="off" placeholder="ex. 1 200">
+              </div>
+              <div>
+                <label for="hold-pnl-pct">ou plus-value (%)</label>
+                <input id="hold-pnl-pct" inputmode="decimal" autocomplete="off" placeholder="ex. 10">
+              </div>
             </div>
-            <div>
-              <label for="hold-value-date">Au</label>
-              <input id="hold-value-date" type="date">
-            </div>
+            <p class="hint">Saisis l’un des trois : les deux autres se calculent à partir du montant investi.</p>
+            <label for="hold-track">Suivre un indice de référence (facultatif)</label>
+            <select id="hold-track">
+              <option value="">Non : valeur fixe jusqu’au prochain relevé</option>
+              <option value="SPY">S&amp;P 500 (proxy SPY)</option>
+              <option value="URTH">MSCI World (proxy URTH)</option>
+            </select>
+            <p class="hint">Estimation entre deux relevés : valeur saisie × évolution de l’indice en € (Twelve Data, clé dans Réglages).
+              Seuls SPY / URTH et le taux USD/EUR sont envoyés.</p>
           </div>
 
           <div class="grid2">
@@ -1151,7 +1173,9 @@
       return { rows, planned, real, rest: planned - real };
     }
     // Payé par : 'moi' compte ; 'tiers' ne compte pas ; 'avance' compte tant qu'elle n'est pas remboursée.
-    const countsForMe = (row) => !row.paid_by || row.paid_by === 'moi' || (row.paid_by === 'avance' && !row.reimbursed);
+    // Commun : payé par le compte commun ou avancé par un membre → compte dans le réel du Commun.
+    const countsForMe = (row) => !row.paid_by || ['moi', 'commun', 'membre'].includes(row.paid_by)
+      || (row.paid_by === 'avance' && !row.reimbursed);
     const payerLabel = (row) => (row.payer_name && row.payer_name.trim()) || (row.paid_by === 'avance' ? 'Remboursements' : 'Tiers');
 
     // Ce que des tiers paient pour moi (par payeur) + avances en attente de remboursement.
@@ -1168,6 +1192,35 @@
         } else if (it.paid_by === 'avance') pending += a;
       }
       return { byPayer, total, pending };
+    }
+    // Équilibre du Commun pour un mois : chaque membre doit une part égale des dépenses avancées ;
+    // les remboursements déjà enregistrés (« Marquer comme réglé ») sont déduits.
+    // expenses : [{ paid_by, paid_by_member, amount }] ; settlements : [{ from_user, to_user, amount }]
+    function commonBalance(expenses, memberIds, settlements = []) {
+      const cents = (x) => Math.round(x * 100) / 100;
+      const advances = Object.fromEntries(memberIds.map((id) => [id, 0]));
+      for (const e of expenses) {
+        if (e.paid_by === 'membre' && e.paid_by_member in advances) advances[e.paid_by_member] += Number(e.amount) || 0;
+      }
+      const total = Object.values(advances).reduce((x, y) => x + y, 0);
+      const share = memberIds.length ? total / memberIds.length : 0;
+      const net = Object.fromEntries(memberIds.map((id) => [id, advances[id] - share]));   // > 0 : on lui doit
+      for (const st of settlements) {
+        const a = Number(st.amount) || 0;
+        if (st.from_user in net) net[st.from_user] += a;
+        if (st.to_user in net) net[st.to_user] -= a;
+      }
+      // Qui doit combien à qui (les débiteurs remboursent les créanciers)
+      const debtors = memberIds.filter((id) => net[id] < -0.004).map((id) => ({ id, left: -net[id] }));
+      const creditors = memberIds.filter((id) => net[id] > 0.004).map((id) => ({ id, left: net[id] }));
+      const transfers = [];
+      for (const d of debtors) {
+        for (const c of creditors) {
+          const amount = Math.min(d.left, c.left);
+          if (amount > 0.004) { transfers.push({ from: d.id, to: c.id, amount: cents(amount) }); d.left -= amount; c.left -= amount; }
+        }
+      }
+      return { advances, total: cents(total), share: cents(share), net, transfers };
     }
     // </budget>
 
@@ -1341,7 +1394,7 @@
     const numOrNull = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
     // Montant investi = quantité × PRU (sinon le montant total saisi)
     const holdingInvested = (h) => (numOrNull(h.pru) !== null ? (Number(h.quantity) || 0) * Number(h.pru) : Number(h.invested) || 0);
-    // Scénarios de rendement total annuel (%) : pessimiste / central / optimiste
+    // Scénarios de rendement total annuel (%) : prudent / probable / favorable
     const SCENARIOS = { etf: [2, 5, 8], action: [0, 5, 10], crypto: [-15, 5, 25] };
     const DEFAULT_ETF_RETURN = 6;   // capitalisant : rendement total annuel estimé par défaut
 
@@ -1371,17 +1424,26 @@
         const inv = holdingInvested(h);
         monthly += Number(h.monthly_contribution) || 0;
         let v = null, price = null;
-        if (priceMode(h) === 'saisie') v = numOrNull(h.manual_value);
-        else {
+        let estimate = null;
+        if (priceMode(h) === 'saisie') {
+          v = numOrNull(h.manual_value);
+          // Suivi d'un indice : valeur saisie × (indice en € aujourd'hui / indice en € au moment de la saisie)
+          const idx = h.track_index && prices['td:' + h.track_index];
+          const ref = numOrNull(h.index_ref_eur);
+          if (v !== null && idx && Number.isFinite(idx.eur) && ref) {
+            estimate = { ratio: idx.eur / ref, since: h.index_ref_at || h.manual_value_date, index: h.track_index, stale: !!idx.stale };
+            v = v * estimate.ratio;
+          }
+        } else {
           const p = prices[priceKey(h)];
           price = p && Number.isFinite(p.eur) ? p.eur : null;
           v = price === null ? null : (Number(h.quantity) || 0) * price;
         }
-        if (v === null) { missing++; return { h, price, value: null, invested: inv, pnl: null, pnlPct: null, dividends: 0 }; }
+        if (v === null) { missing++; return { h, price, value: null, invested: inv, pnl: null, pnlPct: null, dividends: 0, estimate: null }; }
         value += v; investedValued += inv;
         const div = dividendIncome(h, v);
         dividends += div;
-        return { h, price, value: v, invested: inv, pnl: v - inv, pnlPct: inv > 0 ? (v - inv) / inv : null, dividends: div };
+        return { h, price, value: v, invested: inv, pnl: v - inv, pnlPct: inv > 0 ? (v - inv) / inv : null, dividends: div, estimate };
       });
       const invested = holdings.reduce((s, h) => s + holdingInvested(h), 0);
       const pnl = value - investedValued;
@@ -1412,7 +1474,7 @@
     // Tables « à espace » : chaque ligne porte household_id + scope + user_id.
     // db.insert les remplit tout seul selon l'espace actif ; la RLS fait le reste côté base.
     const SCOPED_TABLES = ['ep_accounts', 'ep_budget_lines', 'ep_month_overrides',
-                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals', 'ep_holdings'];
+                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals', 'ep_holdings', 'ep_settlements'];
     const db = {
       isScoped: (table) => SCOPED_TABLES.includes(table),
 
@@ -1975,14 +2037,23 @@
       },
     };
 
+    // Prix de l'indice (en €) servant de référence lors d'une saisie de valeur ; null si indisponible.
+    async function indexReference(symbol) {
+      const p = (await Prices.get([{ asset_type: 'etf', symbol }]))['td:' + symbol];
+      return p && Number.isFinite(p.eur) && !p.stale ? p : null;
+    }
+
     // Lignes de projection (Épargne et Vue d'ensemble) : comptes à positions détaillés position par position.
     function projectionInputs(accounts, vals, { mode = 'manuel', i = 1 } = {}) {
       return accounts.flatMap((a) => {
         const v = vals[a.id];
         const capOnContributions = !!typeInfo(a.type).capOnContributions;
         if (v && v.complete) return positionsForProjection(a, v, { mode, i, capOnContributions });
-        return [capOnContributions
-          ? { ...a, cap_on_contributions: true, contributions_base: v ? v.invested : (a.stored_balance ?? a.balance) } : a];
+        const out = capOnContributions
+          ? { ...a, cap_on_contributions: true, contributions_base: v ? v.invested : (a.stored_balance ?? a.balance) } : { ...a };
+        // Compte en bourse sans positions : scénarios ETF ; livrets et comptes courants : taux fixe (pas de fourchette)
+        if (mode === 'scenarios' && typeInfo(a.type).risky) out.annual_rate = (a.type === 'crypto' ? SCENARIOS.crypto : SCENARIOS.etf)[i];
+        return [out];
       });
     }
 
@@ -1991,9 +2062,13 @@
     async function loadRealAccounts(accounts, { force = false } = {}) {
       const ids = accounts.map((a) => a.id);
       const holdings = ids.length ? await db.list('ep_holdings', { space: 'tout', filters: { account_id: ids } }) : [];
-      // Seules les positions en prix automatique interrogent CoinGecko / Twelve Data
+      // Seules les positions en prix automatique interrogent CoinGecko / Twelve Data,
+      // plus les indices suivis (SPY / URTH) des valeurs saisies : seuls ces symboles partent.
       const auto = holdings.filter((h) => priceMode(h) === 'auto');
-      const prices = auto.length ? await Prices.get(auto, { force }) : {};
+      const tracked = [...new Set(holdings.filter((h) => priceMode(h) === 'saisie' && h.track_index && h.index_ref_eur).map((h) => h.track_index))]
+        .map((symbol) => ({ asset_type: 'etf', symbol }));
+      const wanted = [...auto, ...tracked];
+      const prices = wanted.length ? await Prices.get(wanted, { force }) : {};
       const vals = {};
       for (const a of accounts) {
         const hs = holdings.filter((h) => h.account_id === a.id);
@@ -2044,7 +2119,7 @@
     if (window.Chart) Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
 
     const Savings = {
-      root: null, accounts: [], snapshots: [], plan: null, vals: {}, returnMode: 'manuel', editingHolding: null,
+      root: null, accounts: [], snapshots: [], plan: null, vals: {}, returnMode: 'manuel', editingHolding: null, showDetail: false,
       horizon: 10,                          // années affichées sur le graphique
       extra: { accountId: null, amount: 0 }, // effort simulé (jamais enregistré)
       chart: null, loadToken: 0, editing: null, prevType: null,
@@ -2094,6 +2169,12 @@
           if (action === 'add-holding') this.openHolding(null, el.dataset.account);
           if (action === 'edit-holding') this.openHolding(el.dataset.id);
           if (action === 'refresh-prices') { this.forcePrices = true; this.mount(this.root); }
+          if (action === 'toggle-detail') {
+            this.showDetail = !this.showDetail;
+            $('proj-detail').hidden = !this.showDetail;
+            el.textContent = this.showDetail ? 'Masquer le détail' : 'Voir le détail';
+            if (this.chart) { this.chart.data.datasets.forEach((d) => { if (d.isContrib) d.hidden = !this.showDetail; }); this.chart.update('none'); }
+          }
           if (action === 'return-mode') {
             this.returnMode = el.dataset.mode;
             root.querySelectorAll('[data-action=return-mode]').forEach((b) => b.setAttribute('aria-checked', b.dataset.mode === this.returnMode));
@@ -2173,6 +2254,7 @@
 
           <div class="card">
             <h2>Projection</h2>
+            <p id="proj-sentence" class="proj-sentence"></p>
             <div class="seg" role="radiogroup" aria-label="Horizon">
               ${HORIZONS.map((y) => `<button type="button" role="radio" data-horizon="${y}" aria-checked="${y === this.horizon}">${years(y)}</button>`).join('')}
             </div>
@@ -2186,21 +2268,25 @@
               ${this.accounts.map((a) => `<option value="${a.id}" ${a.id === this.extra.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
             </select>
             <p class="hint">Simulation : rien n’est enregistré.</p>
-            ${Object.keys(this.vals).length ? `
-              <label>Rendement des comptes à positions</label>
-              <div class="seg" role="radiogroup" aria-label="Rendement des comptes à positions">
-                ${[['manuel', 'Manuel'], ['scenarios', 'Scénarios']].map(([m, l]) =>
+            ${this.hasRisk() ? `
+              <label>Projection probable</label>
+              <div class="seg" role="radiogroup" aria-label="Rendement de la projection probable">
+                ${[['manuel', 'Mes rendements'], ['scenarios', 'Scénario probable']].map(([m, l]) =>
                   `<button type="button" role="radio" data-action="return-mode" data-mode="${m}" aria-checked="${m === this.returnMode}">${l}</button>`).join('')}
-              </div>
-              <p class="hint" id="return-hint"></p>` : ''}
-            <div class="chart-box"><canvas id="savings-chart" role="img" aria-label="Graphique : réel, projection et versements seuls"></canvas></div>
-            <table class="proj-table">
-              <thead><tr><th>Horizon</th><th>Capital</th><th>Versements</th><th>Intérêts</th></tr></thead>
-              <tbody id="proj-body"></tbody>
-            </table>
-            <p class="hint">Capital = solde actuel (${money(total)}) + versements + intérêts/plus-values.
-              Calcul mensuel simplifié : solde × (1 + taux/12) + versement, versement arrêté au plafond.
-              ${Object.keys(this.vals).length ? '<br><strong>Valeur indicative, rendements passés non garantis.</strong>' : ''}</p>
+              </div>` : ''}
+            <div class="chart-box"><canvas id="savings-chart" role="img" aria-label="Graphique : le réel jusqu’à aujourd’hui, puis la projection probable et sa fourchette"></canvas></div>
+            <button type="button" class="btn-ghost w100" data-action="toggle-detail" style="margin-top:8px">${this.showDetail ? 'Masquer le détail' : 'Voir le détail'}</button>
+            <div id="proj-detail" ${this.showDetail ? '' : 'hidden'}>
+              <table class="proj-table">
+                <thead><tr><th>Horizon</th><th>Probable</th><th>Versements</th><th>Gains</th></tr></thead>
+                <tbody id="proj-body"></tbody>
+              </table>
+              <p class="hint" id="return-hint"></p>
+              <p class="hint">Capital = solde actuel (${money(total)}) + versements + intérêts/plus-values.
+                Calcul mensuel simplifié : solde × (1 + taux/12) + versement, versement arrêté au plafond.
+                La courbe « versements seuls » montre ce que tu aurais sans aucun rendement.</p>
+            </div>
+            ${this.hasRisk() ? '<p class="hint"><strong>Valeur indicative, rendements passés non garantis.</strong></p>' : ''}
           </div>
 
           <div class="card">
@@ -2238,28 +2324,46 @@
         return projectionInputs(this.accounts, this.vals, { mode: this.returnMode, i: scenarioIdx });
       },
 
-      // Recalcule tableau, graphique et alertes (horizon, curseur ou compte choisi changés).
+      // Placements à risque (positions, bourse, crypto…) : eux seuls ont une fourchette ; les livrets non.
+      hasRisk() {
+        return this.accounts.some((a) => this.vals[a.id] || typeInfo(a.type).risky);
+      },
+
+      // Recalcule la phrase, le tableau, le graphique et les alertes (horizon, curseur ou mode changés).
       updateProjection() {
         let extra = this.extra.amount > 0 && this.extra.accountId ? { ...this.extra } : null;
         // Effort sur un compte à positions : ajouté à sa première position
         if (extra && this.vals[extra.accountId] && this.vals[extra.accountId].complete) extra.accountId = this.vals[extra.accountId].lines[0].h.id;
-        const full = projectSavings(this.projectionAccounts(1), 20 * 12, extra);
-        const hasVals = Object.keys(this.vals).length > 0;
-        const range = hasVals && this.returnMode === 'scenarios'
-          ? [0, 2].map((i) => projectSavings(this.projectionAccounts(i), 20 * 12, extra)) : null;
+        const months = 20 * 12;
+        const full = projectSavings(this.projectionAccounts(1), months, extra);
+        // Fourchette : scénarios prudent / favorable, uniquement s'il y a des placements à risque
+        const range = this.hasRisk()
+          ? [0, 2].map((i) => projectSavings(projectionInputs(this.accounts, this.vals, { mode: 'scenarios', i }), months, extra)) : null;
+        const low = (k) => Math.min(range[0].points[k].total, full.points[k].total);
+        const high = (k) => Math.max(range[1].points[k].total, full.points[k].total);
+
+        // Phrase de synthèse pour l'horizon choisi
+        const k = this.horizon * 12;
+        const about = (x) => fmtEUR0.format(Math.round(x / 100) * 100);
+        const perso = state.space === 'perso';
+        $('proj-sentence').innerHTML = `Dans <strong>${years(this.horizon)}</strong>, ${perso ? 'tu devrais' : 'vous devriez'} avoir environ
+          <strong>${about(full.points[k].total)}</strong>${range ? ` (entre ${about(low(k))} et ${about(high(k))} selon les marchés)` : ''},
+          dont ${fmtEUR0.format(full.points[k].contributed)} versés par ${perso ? 'toi' : 'vous'}.`;
+
         $('proj-body').innerHTML = HORIZONS.map((y) => {
           const p = full.points[y * 12];
           return `<tr class="${y === this.horizon ? 'is-current' : ''}">
             <td>${years(y)}</td><td>${fmtEUR0.format(p.total)}${range
-              ? `<span class="delta muted">${fmtCompact.format(range[0].points[y * 12].total)}–${fmtCompact.format(range[1].points[y * 12].total)} €</span>` : ''}</td>
+              ? `<span class="delta muted">${fmtCompact.format(low(y * 12))}–${fmtCompact.format(high(y * 12))} €</span>` : ''}</td>
             <td>${fmtEUR0.format(p.contributed)}</td><td>${fmtEUR0.format(p.interest)}</td></tr>`;
         }).join('');
-        if (hasVals && $('return-hint')) {
-          $('return-hint').textContent = this.returnMode === 'manuel'
-            ? `Rendement saisi sur chaque position (ETF capitalisant : ${DEFAULT_ETF_RETURN} % par défaut ; sinon taux du compte), à partir de la valeur du jour, avec les versements programmés.`
-            : 'Zone colorée = pessimiste → optimiste (ETF 2 / 5 / 8 %, actions 0 / 5 / 10 %, crypto −15 / 5 / 25 % par an). Tableau : central, puis fourchette.';
+        if ($('return-hint')) {
+          $('return-hint').textContent = (this.returnMode === 'manuel'
+            ? `Projection probable : rendements saisis (ETF capitalisant : ${DEFAULT_ETF_RETURN} % par défaut ; sinon taux du compte). `
+            : 'Projection probable : scénario probable. ')
+            + (range ? 'Fourchette prudent ↔ favorable : ETF 2 / 5 / 8 %, actions 0 / 5 / 10 %, crypto −15 / 5 / 25 %, autres placements en bourse 2 / 5 / 8 % par an. Livrets et comptes courants : pas de fourchette.' : '');
         }
-        this.drawChart(full, range);
+        this.drawChart(full, range ? { low: full.points.map((_, i) => low(i)), high: full.points.map((_, i) => high(i)) } : null);
         this.renderAlerts(full);
       },
 
@@ -2281,39 +2385,59 @@
           const p = i >= 0 ? full.points[i] : null;
           proj.push(p ? p.total : null);
           contrib.push(p ? full.start + p.contributed : null);
-          low.push(range && i >= 0 ? range[0].points[i].total : null);
-          high.push(range && i >= 0 ? range[1].points[i].total : null);
+          low.push(range && i >= 0 ? range.low[i] : null);
+          high.push(range && i >= 0 ? range.high[i] : null);
         }
-        const c = { space: cssVar('--space'), text: cssVar('--text'), muted: cssVar('--muted'), border: cssVar('--border'),
-                    range: cssVar(state.space === 'perso' ? '--wool' : '--accent') };
+        const c = { space: cssVar('--space'), text: cssVar('--text'), muted: cssVar('--muted'), border: cssVar('--border') };
+        const todayIndex = -from;   // position du mois en cours sur l'axe
         const data = {
           labels,
           datasets: [
-            { label: 'Réel (relevés)', data: real, borderColor: c.text, backgroundColor: c.text,
-              pointRadius: 3, pointHoverRadius: 5, borderWidth: 2, spanGaps: true, pointStyle: 'circle' },
-            { label: 'Projection', data: proj, borderColor: c.space, backgroundColor: withAlpha(c.space, 0.12),
-              fill: range ? false : '+1', pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.5, pointStyle: 'circle' },
-            { label: 'Versements seuls', data: contrib, borderColor: c.muted, backgroundColor: c.muted,
-              borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 3, borderWidth: 1.5, fill: false, pointStyle: 'line' },
+            { label: 'Réel (tes relevés)', data: real, borderColor: c.text, backgroundColor: c.text,
+              pointRadius: 3, pointHoverRadius: 5, borderWidth: 2.5, spanGaps: true, pointStyle: 'circle' },
+            { label: 'Projection probable', data: proj, borderColor: c.space, backgroundColor: c.space,
+              borderDash: [7, 5], fill: false, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.5, pointStyle: 'line' },
             ...(range ? [
-              { label: 'Pessimiste', data: low, borderColor: withAlpha(c.range, 0.7), backgroundColor: withAlpha(c.range, 0.7),
-                borderWidth: 1, pointRadius: 0, pointHoverRadius: 3, fill: false, pointStyle: 'line' },
-              { label: 'Optimiste', data: high, borderColor: withAlpha(c.range, 0.7), backgroundColor: withAlpha(c.range, 0.2),
-                borderWidth: 1, pointRadius: 0, pointHoverRadius: 3, fill: '-1', pointStyle: 'rect' },
+              { label: 'Prudent', data: low, isLow: true, borderColor: 'transparent', backgroundColor: 'transparent',
+                pointRadius: 0, pointHoverRadius: 0, fill: false },
+              { label: 'Fourchette prudent ↔ favorable', data: high, borderColor: 'transparent', backgroundColor: withAlpha(c.space, 0.14),
+                pointRadius: 0, pointHoverRadius: 0, fill: '-1', pointStyle: 'rect' },
             ] : []),
+            { label: 'Versements seuls', data: contrib, isContrib: true, hidden: !this.showDetail, borderColor: c.muted, backgroundColor: c.muted,
+              borderDash: [2, 4], pointRadius: 0, pointHoverRadius: 3, borderWidth: 1.5, fill: false, pointStyle: 'line' },
           ],
         };
+        this.todayIndex = todayIndex;
         if (this.chart) { this.chart.data = data; this.chart.update('none'); return; }
+        const self = this;
+        // Trait vertical « Aujourd'hui » (petit plugin maison, sans dépendance)
+        const todayLine = {
+          id: 'todayLine',
+          afterDatasetsDraw(chart) {
+            const x = chart.scales.x.getPixelForValue(self.todayIndex);
+            const { top, bottom } = chart.chartArea;
+            const ctx = chart.ctx;
+            ctx.save();
+            ctx.strokeStyle = cssVar('--muted'); ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+            ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+            ctx.setLineDash([]); ctx.fillStyle = cssVar('--muted'); ctx.font = '600 11px ' + Chart.defaults.font.family;
+            ctx.textAlign = x > chart.chartArea.right - 70 ? 'right' : 'left';
+            ctx.fillText('Aujourd’hui', x + (ctx.textAlign === 'left' ? 4 : -4), top + 10);
+            ctx.restore();
+          },
+        };
         this.chart = new Chart(canvas, {
           type: 'line',
           data,
+          plugins: [todayLine],
           options: {
             responsive: true, maintainAspectRatio: false, animation: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
-              legend: { position: 'bottom', labels: { color: c.muted, usePointStyle: true, boxWidth: 8, boxHeight: 8, padding: 14 } },
+              legend: { position: 'bottom', labels: { color: c.muted, usePointStyle: true, boxWidth: 8, boxHeight: 8, padding: 14,
+                filter: (item, d) => !d.datasets[item.datasetIndex].isLow } },
               tooltip: {
-                filter: (item) => item.raw !== null,
+                filter: (item) => item.raw !== null && !item.dataset.isLow,
                 callbacks: { label: (ctx) => `${ctx.dataset.label} : ${money(ctx.raw)}` },
               },
             },
@@ -2451,8 +2575,16 @@
         const when = (ms) => new Date(ms).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
         const valueInfo = (h) => {
           if (priceMode(h) === 'saisie') {
-            return h.manual_value === null || h.manual_value === undefined ? '<span class="neg">Valeur à saisir</span>'
-              : `Valeur saisie le ${new Date((h.manual_value_date || isoDate()) + 'T12:00:00').toLocaleDateString('fr-FR')}`;
+            if (h.manual_value === null || h.manual_value === undefined) return '<span class="neg">Valeur à saisir</span>';
+            const saisie = `saisie ${money(h.manual_value)} le ${new Date((h.manual_value_date || isoDate()) + 'T12:00:00').toLocaleDateString('fr-FR')}`;
+            const line = Object.values(this.vals).flatMap((v) => v.lines).find((l) => l.h.id === h.id);
+            if (line && line.estimate) {
+              const e = line.estimate;
+              return `<strong>Estimation</strong> · suivi de l’indice ${e.index === 'SPY' ? 'S&P 500' : 'MSCI World'} depuis le
+                ${new Date(e.since).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}
+                (${e.ratio >= 1 ? '+' : '−'}${fmtPercent.format(Math.abs(e.ratio - 1))}${e.stale ? ', dernier cours connu' : ''}) · ${saisie}`;
+            }
+            return h.track_index ? `Valeur ${saisie} · suivi de l’indice en attente (clé Twelve Data ?)` : `Valeur ${saisie}`;
           }
           const p = this.prices && this.prices[priceKey(h)];
           if (!p || p.eur === null || p.eur === undefined) return `<span class="neg">Prix indisponible${p && p.error ? ' : ' + esc(p.error) : ''}</span>`;
@@ -2500,6 +2632,7 @@
         $('hold-symbol').value = h ? h.symbol : '';
         $('hold-label').value = h ? h.label || '' : '';
         $('hold-value').value = h ? numToInput(h.manual_value) : '';
+        $('hold-track').value = h && h.track_index ? h.track_index : '';
         $('hold-value-date').value = h && h.manual_value_date ? h.manual_value_date : isoDate();
         $('hold-quantity').value = h ? numToInput(Number(h.quantity)) : '';
         $('hold-pru').value = h ? numToInput(h.pru) : '';
@@ -2512,6 +2645,7 @@
         $('hold-reinvest').checked = !h || h.dividends_reinvested !== false;
         $('hold-delete').hidden = !h;
         syncHoldingForm();
+        syncManualValue('value');
         setMsg($('hold-msg'), '');
         $('holding-dialog').showModal();
       },
@@ -2555,13 +2689,27 @@
         };
         if ([row.total_return, row.price_return, row.dividend_yield].some((v) => v !== null && (bad(v) || Math.abs(v) > 100))) return setMsg(msg, 'Rendement en % : écris 6 pour 6 %.');
         if (isEtf && distribution === 'capitalisant' && row.total_return === null) row.total_return = DEFAULT_ETF_RETURN;
+        // Suivi d'indice : la référence (indice en €) est prise au moment de la saisie de la valeur
+        row.track_index = price_mode === 'saisie' && asset_type !== 'crypto' ? ($('hold-track').value || null) : null;
+        let refWarning = '';
         await withBusy(form, async () => {
+          if (row.track_index) {
+            const unchanged = h && h.track_index === row.track_index && Number(h.manual_value) === row.manual_value && h.index_ref_eur;
+            if (unchanged) { row.index_ref_eur = h.index_ref_eur; row.index_ref_at = h.index_ref_at; }
+            else {
+              const ref = await indexReference(row.track_index);
+              row.index_ref_eur = ref ? ref.eur : null;
+              row.index_ref_at = ref ? new Date(ref.at).toISOString() : null;
+              if (!ref) refWarning = 'Indice indisponible (clé Twelve Data ?) : la valeur saisie est gardée telle quelle.';
+            }
+          } else { row.index_ref_eur = null; row.index_ref_at = null; }
           try {
             if (h) await db.update('ep_holdings', h.id, row);
             else await db.insert('ep_holdings', { ...row, account_id: acc.id }, { space: acc.scope });
           } catch (err) { return setMsg(msg, frError(err)); }
           $('holding-dialog').close();
           await remountAll();
+          if (refWarning) setMsg($('savings-msg'), refWarning);
         });
       },
 
@@ -2649,7 +2797,8 @@
           const acc = this.accounts.find((a) => a.id === h.account_id);
           return `<label for="val-${h.id}">${esc(acc.name)} · ${esc(h.label || h.symbol)}
               <span class="muted small">(saisie le ${h.manual_value_date ? new Date(h.manual_value_date + 'T12:00:00').toLocaleDateString('fr-FR') : '—'})</span></label>
-            <input id="val-${h.id}" data-holding="${h.id}" inputmode="decimal" autocomplete="off" value="${numToInput(h.manual_value)}">`;
+            <input id="val-${h.id}" data-holding="${h.id}" inputmode="decimal" autocomplete="off"
+              value="${numToInput(Math.round((Object.values(this.vals).flatMap((v) => v.lines).find((l) => l.h.id === h.id) || {}).value * 100) / 100 || h.manual_value)}">`;
         }).join('');
         setMsg($('values-msg'), '');
         $('values-dialog').showModal();
@@ -2664,7 +2813,18 @@
         }
         await withBusy(form, async () => {
           try {
-            await Promise.all(updates.map(([id, v]) => db.update('ep_holdings', id, { manual_value: v, manual_value_date: isoDate() })));
+            // La valeur saisie au relevé remet la référence de l'indice à zéro
+            const all = Object.values(this.vals).flatMap((x) => x.holdings);
+            const refs = {};
+            for (const idx of new Set(all.filter((h) => h.track_index && updates.some(([id]) => id === h.id)).map((h) => h.track_index))) {
+              refs[idx] = await indexReference(idx);
+            }
+            await Promise.all(updates.map(([id, v]) => {
+              const h = all.find((x) => x.id === id);
+              const ref = h && h.track_index ? refs[h.track_index] : null;
+              return db.update('ep_holdings', id, { manual_value: v, manual_value_date: isoDate(),
+                ...(h && h.track_index ? { index_ref_eur: ref ? ref.eur : null, index_ref_at: ref ? new Date(ref.at).toISOString() : null } : {}) });
+            }));
           } catch (err) { return setMsg($('values-msg'), frError(err)); }
           $('values-dialog').close();
           await this.mount(this.root);   // recalcule les valeurs avant de relever
@@ -2727,6 +2887,23 @@
         if (inv !== null) $('hold-pru').value = numToInput(Math.round(inv / q * 10000) / 10000);
       }
     }
+    function syncManualValue(from) {
+      const q = parseAmount($('hold-quantity').value), pru = parseAmount($('hold-pru').value);
+      const inv = pru !== null && q > 0 ? q * pru : parseAmount($('hold-invested').value);
+      if (!(inv > 0)) return;
+      const r2 = (x) => Math.round(x * 100) / 100;
+      let value = parseAmount($('hold-value').value);
+      if (from === 'pnl') { const p = parseAmount($('hold-pnl').value); if (p === null) return; value = inv + p; }
+      if (from === 'pct') { const p = parseAmount($('hold-pnl-pct').value); if (p === null) return; value = inv * (1 + p / 100); }
+      if (value === null) return;
+      if (from !== 'value') $('hold-value').value = numToInput(r2(value));
+      if (from !== 'pnl') $('hold-pnl').value = numToInput(r2(value - inv));
+      if (from !== 'pct') $('hold-pnl-pct').value = numToInput(r2((value - inv) / inv * 100));
+    }
+    $('hold-value').addEventListener('input', () => syncManualValue('value'));
+    $('hold-pnl').addEventListener('input', () => syncManualValue('pnl'));
+    $('hold-pnl-pct').addEventListener('input', () => syncManualValue('pct'));
+    for (const id of ['hold-quantity', 'hold-pru', 'hold-invested']) $(id).addEventListener('input', () => syncManualValue('value'));
     for (const id of ['hold-type', 'hold-mode', 'hold-distribution']) $(id).addEventListener('change', syncHoldingForm);
     $('hold-type').addEventListener('change', () => { $('hold-mode').value = $('hold-type').value === 'crypto' ? 'auto' : 'saisie'; syncHoldingForm(); });
     $('hold-quantity').addEventListener('input', () => syncInvested('qty'));
@@ -2814,7 +2991,8 @@
     // ================== « Payé par » (lignes de budget et dépenses) ==================
     // Badges : « Payé par Parents », « À rembourser », « Remboursé ».
     function paidByTags(row) {
-      if (!row.paid_by || row.paid_by === 'moi') return '';
+      if (row.paid_by === 'membre') return `<span class="acc-tags"><span class="tag tag-third">Avancé par ${esc(memberName(row.paid_by_member) || 'un membre')}</span></span>`;
+      if (!row.paid_by || row.paid_by === 'moi' || row.paid_by === 'commun') return '';
       const tag = row.paid_by === 'tiers' ? `<span class="tag tag-third">Payé par ${esc(row.payer_name || 'un tiers')}</span>`
         : row.reimbursed ? `<span class="tag tag-third">Remboursé${row.payer_name ? ' par ' + esc(row.payer_name) : ''}</span>`
         : `<span class="tag tag-pending">À rembourser${row.payer_name ? ' · ' + esc(row.payer_name) : ''}</span>`;
@@ -2823,7 +3001,7 @@
     // Affiche le nom du tiers / la case « remboursé » selon le choix (préfixe : 'line' ou 'qa').
     function syncPaidBy(prefix) {
       const v = $(prefix + '-paidby').value;
-      $(prefix + '-payer-box').hidden = v === 'moi';
+      $(prefix + '-payer-box').hidden = ['moi', 'commun'].includes(v) || v.startsWith('membre:');
       const box = $(prefix + '-reimbursed-box');
       if (box) box.hidden = v !== 'avance';
     }
@@ -3174,7 +3352,7 @@
 
     // ================== Onglet Dépenses ==================
     const ExpensesTab = {
-      root: null, month: monthStart(), plan: null, expenses: [], overrides: [], result: null,
+      root: null, month: monthStart(), plan: null, expenses: [], overrides: [], settlements: [], result: null,
       adjusting: null, lastCategory: 'alimentation', loadToken: 0,
 
       async mount(root) {
@@ -3184,12 +3362,14 @@
         const token = ++this.loadToken;
         const from = isoMonth(this.month), to = isoMonth(addMonths(this.month, 1));
         try {
-          const [plan, expenses, overrides] = await Promise.all([
+          const [plan, expenses, overrides, settlements] = await Promise.all([
             loadPlan(state.space, this.month),
             db.list('ep_expenses', { range: ['date', from, to], order: 'date', ascending: false }),
             db.list('ep_month_overrides', { filters: { month: from } }),
+            state.space === 'commun' ? db.list('ep_settlements', { filters: { month: from } }) : [],
           ]);
           if (token !== this.loadToken) return;
+          this.settlements = settlements;
           expenses.sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at).localeCompare(String(a.created_at)));
           Object.assign(this, { plan, expenses, overrides });
           // Seules mes dépenses comptent (pas celles payées par un tiers, ni les avances remboursées)
@@ -3217,6 +3397,8 @@
             return this.resetOverrides(this.overrides);
           }
           if (a === 'del-exp') return this.removeExpense(el.dataset.id);
+          if (a === 'settle') return this.settle(el);
+          if (a === 'unsettle') return this.unsettle(el.dataset.id);
         });
         root.addEventListener('change', (e) => {
           if (e.target.id === 'qa-paidby') syncPaidBy('qa');
@@ -3271,10 +3453,12 @@
               </div>
               <div>
                 <label for="qa-paidby">Payé par</label>
-                <select id="qa-paidby">
+                <select id="qa-paidby">${perso ? `
                   <option value="moi">Moi</option>
                   <option value="tiers">Un tiers</option>
-                  <option value="avance">Avancé (à rembourser)</option>
+                  <option value="avance">Avancé (à rembourser)</option>`
+                  : `<option value="commun">Compte commun</option>
+                  ${state.members.map((m) => `<option value="membre:${m.user_id}">${esc(m.first_name)} (avancé)</option>`).join('')}`}
                 </select>
               </div>
               <div id="qa-payer-box" hidden>
@@ -3297,6 +3481,7 @@
 
           ${this.incomeCardHTML()}
           ${this.thirdPartyHTML()}
+          ${this.balanceHTML()}
 
           <div class="card">
             <h2>Par catégorie</h2>
@@ -3346,7 +3531,12 @@
         const label = $('qa-label').value.trim() || catInfo(category).label;
         const date = $('qa-date').value || isoDate();
         await withBusy(form, async () => {
-          try { await db.insert('ep_expenses', { date, label, category, amount, ...readPaidBy('qa') }); }
+          // Commun : compte commun, ou avancé par un membre (compte dans l'équilibre du mois)
+          const pb = $('qa-paidby').value;
+          const payer = state.space === 'perso' ? readPaidBy('qa')
+            : pb.startsWith('membre:') ? { paid_by: 'membre', paid_by_member: pb.slice(7), payer_name: null, reimbursed: false }
+            : { paid_by: 'commun', payer_name: null, reimbursed: false };
+          try { await db.insert('ep_expenses', { date, label, category, amount, ...payer }); }
           catch (err) { return setMsg(msg, frError(err)); }
           this.lastCategory = category;
           this.month = monthStart(parseMonth(date));   // affiche le mois de la dépense saisie
@@ -3384,6 +3574,44 @@
             ${t.pending ? `<div class="kv strong"><span>En attente de remboursement</span><span>${money(t.pending)}</span></div>` : ''}
             <p class="hint">Non compté dans ton réel ni dans ton budget. Une dépense avancée compte tant qu’elle n’est pas remboursée.</p>
           </div>`;
+      },
+
+      // Commun : qui a avancé combien ce mois-ci, et qui doit combien à qui (parts égales).
+      balanceHTML() {
+        if (state.space !== 'commun' || state.members.length < 2) return '';
+        const ids = state.members.map((m) => m.user_id);
+        const b = commonBalance(this.expenses, ids, this.settlements);
+        if (!b.total && !this.settlements.length) return '';
+        return `
+          <div class="card">
+            <h2>Équilibre du mois</h2>
+            ${state.members.map((m) => `<div class="kv"><span>Avancé par ${esc(m.first_name)}</span><span>${money(b.advances[m.user_id])}</span></div>`).join('')}
+            <div class="kv"><span>Part de chacun (moitié des avances)</span><span>${money(b.share)}</span></div>
+            ${b.transfers.length ? b.transfers.map((t) => `
+              <div class="kv strong"><span>${esc(memberName(t.from))} doit ${money(t.amount)} à ${esc(memberName(t.to))}</span><span></span></div>
+              <button type="button" class="btn-primary" data-action="settle" data-from="${t.from}" data-to="${t.to}" data-amount="${t.amount}">Marquer comme réglé</button>`).join('')
+              : '<div class="kv strong"><span>Équilibre : personne ne doit rien</span><span>0,00 €</span></div>'}
+            ${this.settlements.length ? `<div class="group-head"><span>Remboursements enregistrés</span></div>
+              ${this.settlements.map((st) => `<div class="kv sub"><span>${esc(memberName(st.from_user))} → ${esc(memberName(st.to_user))},
+                le ${new Date(st.created_at).toLocaleDateString('fr-FR')}</span>
+                <span>${money(st.amount)} <button type="button" class="link-btn" data-action="unsettle" data-id="${st.id}" aria-label="Annuler ce remboursement">annuler</button></span></div>`).join('')}` : ''}
+            <p class="hint">Les dépenses avancées par un membre comptent dans le réel du Commun ; chacun en doit la moitié.</p>
+          </div>`;
+      },
+
+      async settle(el) {
+        const { from, to, amount } = el.dataset;
+        if (!confirm(`Confirmer : ${memberName(from)} a remboursé ${money(Number(amount))} à ${memberName(to)} ?`)) return;
+        try {
+          await db.insert('ep_settlements', { month: isoMonth(this.month), from_user: from, to_user: to, amount: Number(amount) }, { space: 'commun' });
+          await this.mount(this.root);
+        } catch (err) { alert(frError(err)); }
+      },
+
+      async unsettle(id) {
+        if (!confirm('Annuler ce remboursement ?')) return;
+        try { await db.remove('ep_settlements', id); await this.mount(this.root); }
+        catch (err) { alert(frError(err)); }
       },
 
       async toggleReimbursed(id, reimbursed) {
@@ -4086,7 +4314,7 @@
                   <div class="bar done"><span style="width:${Math.max(0, pct * 100)}%"></span></div>
                   <div class="cat-sub"><span>${sp === 'perso' ? '<span class="tag">Privé</span>' : '<span class="tag tag-third">Commun</span>'}
                     ${typeInfo(a.type).label}${v && v.complete && v.pnlPct !== null
-                      ? ` · <span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${fmtPercent.format(Math.abs(v.pnlPct))}</span>` : ''}</span>
+                      ? ` · <span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))} (${v.pnl >= 0 ? '+' : '−'}${fmtPercent.format(Math.abs(v.pnlPct))})</span>` : ''}</span>
                     <span>${fmtPercent.format(pct)}</span></div>
                 </div>`;
               }).join('') : '<p class="muted">Aucun compte pour l’instant.</p>'}

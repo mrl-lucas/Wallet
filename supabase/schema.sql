@@ -431,4 +431,5 @@ grant execute on function public.ep_join_household(text, text)   to authenticate
 --         puis supabase/migration_keepalive.sql (fonction ep_ping pour le réveil GitHub Actions).
 --         puis supabase/migration_holdings.sql (positions + part du commun), et test_rls_holdings.sql pour la vérifier.
 --         puis supabase/migration_holdings_v2.sql (valeur saisie, PRU, versement mensuel, ETF capitalisant / distribuant).
+--         puis supabase/migration_commun_index.sql (dépenses avancées dans le Commun, remboursements, suivi d'indice).
 -- ---------------------------------------------------------------------
