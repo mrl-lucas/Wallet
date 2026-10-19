@@ -355,6 +355,8 @@
     .is-off { opacity: .5; }
     .is-off .line-amount, .is-off .exp-main span:first-child { text-decoration: line-through; }
     .tag-third { background: var(--wool-soft); color: var(--wool); }
+    .tag-gain { background: var(--accent-soft); color: var(--ok); }
+    .tag-loss { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
     .tag-pending { background: #fbe3c4; color: #8a4b00; }
     :root[data-theme="dark"] .tag-pending { background: #3a2a12; color: #f0b766; }
     @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tag-pending { background: #3a2a12; color: #f0b766; } }
@@ -586,30 +588,32 @@
 
           <label for="hold-mode">Valeur de la position</label>
           <select id="hold-mode">
-            <option value="saisie">Valeur saisie (lue dans Trade Republic)</option>
+            <option value="saisie">Copier Trade Republic (valeur + gain)</option>
             <option value="auto">Prix automatique</option>
           </select>
           <p id="hold-symbol-hint" class="hint"></p>
           <div id="hold-manual-box">
             <div class="grid2">
               <div>
-                <label for="hold-value">Valeur actuelle (€)</label>
-                <input id="hold-value" inputmode="decimal" autocomplete="off" placeholder="ex. 13 200">
+                <label for="hold-value">Valeur totale (€)</label>
+                <input id="hold-value" inputmode="decimal" autocomplete="off" placeholder="ex. 2 544,64">
               </div>
               <div>
                 <label for="hold-value-date">Au</label>
                 <input id="hold-value-date" type="date">
               </div>
               <div>
-                <label for="hold-pnl">ou plus-value (€)</label>
-                <input id="hold-pnl" inputmode="decimal" autocomplete="off" placeholder="ex. 1 200">
+                <label for="hold-pnl">Gain (€)</label>
+                <input id="hold-pnl" inputmode="text" autocomplete="off" placeholder="ex. 162,91 ou -50">
               </div>
               <div>
-                <label for="hold-pnl-pct">ou plus-value (%)</label>
-                <input id="hold-pnl-pct" inputmode="decimal" autocomplete="off" placeholder="ex. 10">
+                <label for="hold-pnl-pct">Gain (%)</label>
+                <input id="hold-pnl-pct" inputmode="text" autocomplete="off" placeholder="ex. 6,84 ou -5">
               </div>
             </div>
-            <p class="hint">Saisis l’un des trois : les deux autres se calculent à partir du montant investi.</p>
+            <p class="hint">Recopie 2 des 3 champs affichés par Trade Republic (de préférence valeur + gain €) : le 3e se calcule.
+              Perte : mets un signe « - ».</p>
+            <p class="income-sum" id="hold-tr-result">Investi déduit : —</p>
             <label for="hold-track">Suivre un indice de référence (facultatif)</label>
             <select id="hold-track">
               <option value="">Non : valeur fixe jusqu’au prochain relevé</option>
@@ -622,14 +626,14 @@
 
           <div class="grid2">
             <div>
-              <label for="hold-quantity">Quantité</label>
+              <label for="hold-quantity">Quantité <span id="hold-opt-q" class="muted small">(facultatif)</span></label>
               <input id="hold-quantity" inputmode="decimal" autocomplete="off" placeholder="ex. 25 ou 0,05">
             </div>
             <div>
-              <label for="hold-pru">PRU (€)</label>
+              <label for="hold-pru">PRU (€) <span id="hold-opt-p" class="muted small">(facultatif)</span></label>
               <input id="hold-pru" inputmode="decimal" autocomplete="off" placeholder="ex. 480">
             </div>
-            <div>
+            <div id="hold-invested-box">
               <label for="hold-invested">ou investi total (€)</label>
               <input id="hold-invested" inputmode="decimal" autocomplete="off" placeholder="calculé">
             </div>
@@ -638,7 +642,7 @@
               <input id="hold-monthly" inputmode="decimal" autocomplete="off" placeholder="0">
             </div>
           </div>
-          <p class="hint">PRU = prix de revient unitaire affiché par Trade Republic. Investi = quantité × PRU (l’un se calcule à partir de l’autre).</p>
+          <p class="hint" id="hold-pru-hint">PRU = prix de revient unitaire affiché par Trade Republic. Investi = quantité × PRU (l’un se calcule à partir de l’autre).</p>
 
           <div id="hold-etf-box">
             <label for="hold-distribution">ETF</label>
@@ -676,7 +680,8 @@
       <dialog id="values-dialog" class="sheet" aria-labelledby="values-title">
         <form id="values-form" novalidate>
           <h2 id="values-title">Mettre à jour les valeurs saisies ?</h2>
-          <p class="muted">Recopie la valeur actuelle de chaque position depuis Trade Republic, puis relève les soldes.</p>
+          <p class="muted">Recopie la valeur totale et le gain en € de chaque position depuis Trade Republic (perte : « - »), puis relève les soldes.
+            Préremplis avec l’estimation du jour.</p>
           <div id="values-list"></div>
           <p id="values-msg" class="msg" role="status"></p>
           <button class="btn-primary" type="submit">Mettre à jour et relever</button>
@@ -1026,7 +1031,7 @@
     const money = (n) => fmtEUR.format(Number(n) || 0);
     // Accepte « 1 234,56 », « 1234.56 », « 12 € »… ; renvoie null si illisible.
     function parseAmount(str) {
-      const s = String(str ?? '').replace(/[\s  €]/g, '').replace(',', '.');
+      const s = String(str ?? '').replace(/[\s  €%]/g, '').replace(/[−–]/g, '-').replace(/^\+/, '').replace(',', '.');
       if (s === '' || !/^-?\d*\.?\d+$/.test(s)) return null;
       return Number(s);
     }
@@ -1392,8 +1397,27 @@
     // Par défaut : crypto en automatique, ETF et actions en valeur saisie.
     const priceMode = (h) => h.price_mode || (h.asset_type === 'crypto' ? 'auto' : 'saisie');
     const numOrNull = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
-    // Montant investi = quantité × PRU (sinon le montant total saisi)
-    const holdingInvested = (h) => (numOrNull(h.pru) !== null ? (Number(h.quantity) || 0) * Number(h.pru) : Number(h.invested) || 0);
+    // Montant investi : saisie Trade Republic (valeur − gain) prioritaire ; sinon quantité × PRU ; sinon montant saisi.
+    const holdingInvested = (h) => (h.entry_mode === 'tr' ? Number(h.invested) || 0
+      : numOrNull(h.pru) !== null && numOrNull(h.quantity) !== null ? Number(h.quantity) * Number(h.pru) : Number(h.invested) || 0);
+
+    // « Copier Trade Republic » : 2 des 3 champs (valeur totale, gain €, gain %) donnent le 3e et l'investi.
+    // Priorité au couple valeur + gain € (le plus précis). Calcul en centimes : pas d'arrondi intermédiaire.
+    function fromTradeRepublic({ value = null, gain = null, pct = null }) {
+      const c = (x) => Math.round(x * 100);
+      let valueC, investedC;
+      if (value !== null && gain !== null) { valueC = c(value); investedC = valueC - c(gain); }
+      else if (value !== null && pct !== null) {
+        if (pct <= -100) return null;
+        valueC = c(value); investedC = Math.round(valueC / (1 + pct / 100));
+      } else if (gain !== null && pct !== null) {
+        if (pct === 0) return null;
+        investedC = Math.round(c(gain) / (pct / 100)); valueC = investedC + c(gain);
+      } else return null;
+      if (investedC <= 0) return null;
+      const gainC = valueC - investedC;
+      return { value: valueC / 100, invested: investedC / 100, gain: gainC / 100, pct: gainC / investedC * 100 };
+    }
     // Scénarios de rendement total annuel (%) : prudent / probable / favorable
     const SCENARIOS = { etf: [2, 5, 8], action: [0, 5, 10], crypto: [-15, 5, 25] };
     const DEFAULT_ETF_RETURN = 6;   // capitalisant : rendement total annuel estimé par défaut
@@ -2305,7 +2329,7 @@
         const tags = [a.scope === 'commun' ? '<span class="tag tag-third">Commun</span>' : '<span class="tag">Privé</span>'];
         if (info.locked) tags.push('<span class="tag tag-warn">Bloqué 5 ans</span>');
         if (info.peaRule) tags.push('<span class="tag tag-warn">Retrait avant 5 ans : avantage fiscal perdu</span>');
-        if (v && v.complete && v.pnlPct !== null && v.investedValued > 0) tags.push(`<span class="tag ${v.pnl >= 0 ? 'tag-auto' : 'tag-pending'}">${v.pnl >= 0 ? '+' : '−'}${fmtEUR0.format(Math.abs(v.pnl))} (${fmtPercent.format(v.pnlPct)})</span>`);
+        if (v && v.complete && v.pnlPct !== null && v.investedValued > 0) tags.push(`<span class="tag ${v.pnl >= 0 ? 'tag-gain' : 'tag-loss'}">${v.pnl >= 0 ? '+' : '−'}${fmtEUR0.format(Math.abs(v.pnl))} (${v.pnl >= 0 ? '+' : '−'}${fmtGainPct.format(Math.abs(v.pnlPct))})</span>`);
         if (a.cap !== null && !info.capOnContributions && Number(a.balance) >= Number(a.cap)) tags.push('<span class="tag tag-warn">Plafond atteint</span>');
         return `
           <li><button type="button" class="acc-row" data-action="edit-account" data-id="${a.id}">
@@ -2580,8 +2604,8 @@
             const line = Object.values(this.vals).flatMap((v) => v.lines).find((l) => l.h.id === h.id);
             if (line && line.estimate) {
               const e = line.estimate;
-              return `<strong>Estimation</strong> · suivi de l’indice ${e.index === 'SPY' ? 'S&P 500' : 'MSCI World'} depuis le
-                ${new Date(e.since).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}
+              return `<strong>Estimation depuis le ${new Date(e.since).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}</strong>
+                · suivi de l’indice ${e.index === 'SPY' ? 'S&P 500' : 'MSCI World'}
                 (${e.ratio >= 1 ? '+' : '−'}${fmtPercent.format(Math.abs(e.ratio - 1))}${e.stale ? ', dernier cours connu' : ''}) · ${saisie}`;
             }
             return h.track_index ? `Valeur ${saisie} · suivi de l’indice en attente (clé Twelve Data ?)` : `Valeur ${saisie}`;
@@ -2605,13 +2629,13 @@
                 ${v ? `<ul class="line-list">${v.lines.map((l) => `
                   <li><button type="button" class="line-row" data-action="edit-holding" data-id="${l.h.id}">
                     <span><span class="acc-name">${esc(l.h.label || l.h.symbol)} <span class="muted small">${esc(l.h.symbol)}</span></span>
-                      <span class="acc-meta">${numToInput(Number(l.h.quantity))} × PRU ${money(numOrNull(l.h.pru) ?? (l.invested / (Number(l.h.quantity) || 1)))} · investi ${money(l.invested)}${Number(l.h.monthly_contribution) ? ` · ${money(l.h.monthly_contribution)}/mois` : ''}</span>
+                      <span class="acc-meta">${numOrNull(l.h.quantity) !== null ? `${numToInput(Number(l.h.quantity))}${numOrNull(l.h.pru) !== null ? ` × PRU ${money(l.h.pru)}` : ' parts'} · ` : ''}investi ${money(l.invested)}${l.h.entry_mode === 'tr' ? ' (Trade Republic)' : ''}${Number(l.h.monthly_contribution) ? ` · ${money(l.h.monthly_contribution)}/mois` : ''}</span>
                       <span class="acc-meta">${valueInfo(l.h)}${etfInfo(l.h)}</span>
                       ${l.dividends ? `<span class="acc-meta">Dividendes versés estimés : ${money(l.dividends)}/an</span>` : ''}</span>
                     <span class="line-amount">${l.value === null ? '—' : money(l.value)}
-                      ${l.pnl === null ? '' : `<span class="delta ${l.pnl >= 0 ? 'pos' : 'neg'}">${l.pnl >= 0 ? '+' : '−'}${money(Math.abs(l.pnl))}${l.pnlPct === null ? '' : ' (' + fmtPercent.format(l.pnlPct) + ')'}</span>`}</span>
+                      ${l.pnl === null ? '' : `<span class="delta ${l.pnl >= 0 ? 'pos' : 'neg'}">${l.pnl >= 0 ? '+' : '−'}${money(Math.abs(l.pnl))}${l.pnlPct === null ? '' : ` (${l.pnl >= 0 ? '+' : '−'}${fmtGainPct.format(Math.abs(l.pnlPct))})`}</span>`}</span>
                   </button></li>`).join('')}</ul>
-                  <div class="kv"><span>Plus-value (valeur − investi)</span><span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))}${v.pnlPct === null ? '' : ' (' + fmtPercent.format(v.pnlPct) + ')'}</span></div>
+                  <div class="kv"><span>${v.pnl >= 0 ? 'Gain' : 'Perte'} (valeur − investi ${money(v.investedValued)})</span><span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))}${v.pnlPct === null ? '' : ` (${v.pnl >= 0 ? '+' : '−'}${fmtGainPct.format(Math.abs(v.pnlPct))})`}</span></div>
                   ${v.monthly ? `<div class="kv"><span>Investissement programmé</span><span>${money(v.monthly)} / mois</span></div>` : ''}
                   ${v.dividends ? `<div class="kv"><span>Revenu annuel estimé (dividendes versés)</span><span>${money(v.dividends)}</span></div>` : ''}
                   ${v.complete ? '' : '<p class="hint neg">Valeur manquante : le solde saisi du compte est utilisé en attendant.</p>'}`
@@ -2634,7 +2658,7 @@
         $('hold-value').value = h ? numToInput(h.manual_value) : '';
         $('hold-track').value = h && h.track_index ? h.track_index : '';
         $('hold-value-date').value = h && h.manual_value_date ? h.manual_value_date : isoDate();
-        $('hold-quantity').value = h ? numToInput(Number(h.quantity)) : '';
+        $('hold-quantity').value = h && h.quantity !== null && h.quantity !== undefined ? numToInput(Number(h.quantity)) : '';
         $('hold-pru').value = h ? numToInput(h.pru) : '';
         $('hold-invested').value = h ? numToInput(Math.round(holdingInvested(h) * 100) / 100) : '';
         $('hold-monthly').value = h && Number(h.monthly_contribution) ? numToInput(h.monthly_contribution) : '';
@@ -2645,7 +2669,7 @@
         $('hold-reinvest').checked = !h || h.dividends_reinvested !== false;
         $('hold-delete').hidden = !h;
         syncHoldingForm();
-        syncManualValue('value');
+        resetTradeRepublic(h);
         setMsg($('hold-msg'), '');
         $('holding-dialog').showModal();
       },
@@ -2661,24 +2685,28 @@
         const quantity = opt('hold-quantity');
         const pru = opt('hold-pru');
         const investedTotal = opt('hold-invested');
-        const manual_value = opt('hold-value');
         const monthly = opt('hold-monthly');
         if (!symbol && price_mode === 'auto') return setMsg(msg, asset_type === 'crypto' ? 'Indique l’identifiant CoinGecko (ex. bitcoin).' : 'Indique le symbole (ex. CW8.PA).');
-        if (!(quantity > 0)) return setMsg(msg, 'Indique la quantité (ex. 25 ou 0,05).');
-        if ([pru, investedTotal, manual_value, monthly].some((v) => v !== null && (bad(v) || v < 0))) return setMsg(msg, 'Un montant est illisible ou négatif.');
-        if (pru === null && investedTotal === null) return setMsg(msg, 'Indique le PRU (ou le montant investi total).');
-        if (price_mode === 'saisie' && manual_value === null) return setMsg(msg, 'Indique la valeur actuelle de la position.');
+        if ([quantity, pru, investedTotal, monthly].some((v) => v !== null && (bad(v) || v < 0))) return setMsg(msg, 'Un montant est illisible ou négatif.');
+        // Copier Trade Republic : valeur + gain (ou %) → investi déduit, stocké tel quel
+        const tr = price_mode === 'saisie' ? readTradeRepublic() : null;
+        if (price_mode === 'saisie' && !tr) return setMsg(msg, 'Recopie 2 des 3 champs de Trade Republic (valeur, gain €, gain %).');
+        if (price_mode === 'auto') {
+          if (!(quantity > 0)) return setMsg(msg, 'Indique la quantité (ex. 25 ou 0,05).');
+          if (pru === null && investedTotal === null) return setMsg(msg, 'Indique le PRU (ou le montant investi total).');
+        }
         const isEtf = asset_type === 'etf';
         const distribution = isEtf ? $('hold-distribution').value : null;
         const row = {
           asset_type, price_mode,
           symbol: symbol ? (asset_type === 'crypto' ? symbol.toLowerCase() : symbol.toUpperCase()) : ($('hold-label').value.trim() || 'Position').slice(0, 40),
           label: $('hold-label').value.trim() || null,
-          quantity,
-          // PRU prioritaire ; sinon déduit du montant investi total
-          pru: pru !== null ? pru : investedTotal / quantity,
-          invested: Math.round((pru !== null ? pru * quantity : investedTotal) * 100) / 100,
-          manual_value: price_mode === 'saisie' ? manual_value : null,
+          quantity: quantity > 0 ? quantity : null,
+          entry_mode: tr ? 'tr' : 'pru',
+          // Trade Republic : investi = valeur − gain (jamais recalculé par le PRU) ; sinon PRU ou montant total
+          pru: tr ? (pru !== null ? pru : null) : (pru !== null ? pru : investedTotal / quantity),
+          invested: tr ? tr.invested : Math.round((pru !== null ? pru * quantity : investedTotal) * 100) / 100,
+          manual_value: tr ? tr.value : null,
           manual_value_date: price_mode === 'saisie' ? ($('hold-value-date').value || isoDate()) : null,
           monthly_contribution: monthly || 0,
           distribution,
@@ -2694,7 +2722,8 @@
         let refWarning = '';
         await withBusy(form, async () => {
           if (row.track_index) {
-            const unchanged = h && h.track_index === row.track_index && Number(h.manual_value) === row.manual_value && h.index_ref_eur;
+            const unchanged = h && h.track_index === row.track_index && Number(h.manual_value) === row.manual_value
+              && Number(h.invested) === row.invested && h.index_ref_eur;
             if (unchanged) { row.index_ref_eur = h.index_ref_eur; row.index_ref_at = h.index_ref_at; }
             else {
               const ref = await indexReference(row.track_index);
@@ -2793,23 +2822,35 @@
       takeSnapshot(btn) {
         const manual = Object.values(this.vals).flatMap((v) => v.holdings).filter((h) => priceMode(h) === 'saisie');
         if (!manual.length) return this.doSnapshot(btn);
+        const lines = Object.values(this.vals).flatMap((v) => v.lines);
+        const r2 = (x) => Math.round(x * 100) / 100;
         $('values-list').innerHTML = manual.map((h) => {
           const acc = this.accounts.find((a) => a.id === h.account_id);
-          return `<label for="val-${h.id}">${esc(acc.name)} · ${esc(h.label || h.symbol)}
-              <span class="muted small">(saisie le ${h.manual_value_date ? new Date(h.manual_value_date + 'T12:00:00').toLocaleDateString('fr-FR') : '—'})</span></label>
-            <input id="val-${h.id}" data-holding="${h.id}" inputmode="decimal" autocomplete="off"
-              value="${numToInput(Math.round((Object.values(this.vals).flatMap((v) => v.lines).find((l) => l.h.id === h.id) || {}).value * 100) / 100 || h.manual_value)}">`;
+          const l = lines.find((x) => x.h.id === h.id) || {};
+          const value = l.value ?? Number(h.manual_value);
+          const gain = value - (l.invested ?? holdingInvested(h));
+          return `<div class="group-head"><span>${esc(acc.name)} · ${esc(h.label || h.symbol)}</span>
+              <span>${l.estimate ? 'estimation depuis le' : 'saisie du'} ${h.manual_value_date ? new Date(h.manual_value_date + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) : '—'}</span></div>
+            <div class="grid2">
+              <div><label for="val-${h.id}">Valeur totale (€)</label>
+                <input id="val-${h.id}" data-holding="${h.id}" data-kind="value" inputmode="decimal" autocomplete="off" value="${numToInput(r2(value))}"></div>
+              <div><label for="gain-${h.id}">Gain (€)</label>
+                <input id="gain-${h.id}" data-holding="${h.id}" data-kind="gain" inputmode="text" autocomplete="off" value="${numToInput(r2(gain))}"></div>
+            </div>`;
         }).join('');
         setMsg($('values-msg'), '');
         $('values-dialog').showModal();
       },
 
       async saveValuesAndSnapshot(form) {
+        // Valeur + gain € recopiés de Trade Republic → investi = valeur − gain (recale tout, versements compris)
         const updates = [];
-        for (const input of form.querySelectorAll('[data-holding]')) {
-          const v = parseAmount(input.value);
-          if (v === null || v < 0) { input.focus(); return setMsg($('values-msg'), 'Une valeur est illisible (ex. 13 200).'); }
-          updates.push([input.dataset.holding, v]);
+        for (const input of form.querySelectorAll('[data-kind=value]')) {
+          const id = input.dataset.holding;
+          const gainInput = form.querySelector(`[data-kind=gain][data-holding="${id}"]`);
+          const tr = fromTradeRepublic({ value: parseAmount(input.value), gain: parseAmount(gainInput.value) });
+          if (!tr) { input.focus(); return setMsg($('values-msg'), 'Valeur ou gain illisible (ex. 2 544,64 et 162,91 ; perte : -50).'); }
+          updates.push([id, tr]);
         }
         await withBusy(form, async () => {
           try {
@@ -2819,10 +2860,10 @@
             for (const idx of new Set(all.filter((h) => h.track_index && updates.some(([id]) => id === h.id)).map((h) => h.track_index))) {
               refs[idx] = await indexReference(idx);
             }
-            await Promise.all(updates.map(([id, v]) => {
+            await Promise.all(updates.map(([id, tr]) => {
               const h = all.find((x) => x.id === id);
               const ref = h && h.track_index ? refs[h.track_index] : null;
-              return db.update('ep_holdings', id, { manual_value: v, manual_value_date: isoDate(),
+              return db.update('ep_holdings', id, { manual_value: tr.value, invested: tr.invested, entry_mode: 'tr', manual_value_date: isoDate(),
                 ...(h && h.track_index ? { index_ref_eur: ref ? ref.eur : null, index_ref_at: ref ? new Date(ref.at).toISOString() : null } : {}) });
             }));
           } catch (err) { return setMsg($('values-msg'), frError(err)); }
@@ -2868,6 +2909,13 @@
         : type === 'crypto' ? 'Prix CoinGecko : identifiant comme bitcoin, ethereum, solana.'
         : 'Option secondaire : prix Twelve Data (clé dans Réglages). L’offre gratuite ne couvre pas la plupart des ETF européens.';
       $('hold-manual-box').hidden = auto;
+      // Copier Trade Republic : l'investi vient de valeur − gain ; quantité et PRU sont facultatifs et n'y touchent pas
+      $('hold-invested-box').hidden = !auto;
+      $('hold-opt-q').hidden = auto;
+      $('hold-opt-p').hidden = auto;
+      $('hold-pru-hint').textContent = auto
+        ? 'PRU = prix de revient unitaire affiché par Trade Republic. Investi = quantité × PRU (l’un se calcule à partir de l’autre).'
+        : 'Quantité et PRU sont pour information : ils ne modifient jamais le montant investi déduit de Trade Republic.';
       $('hold-etf-box').hidden = !etf;
       $('hold-total-box').hidden = dist;
       $('hold-dist-box').hidden = !dist;
@@ -2887,23 +2935,45 @@
         if (inv !== null) $('hold-pru').value = numToInput(Math.round(inv / q * 10000) / 10000);
       }
     }
-    function syncManualValue(from) {
-      const q = parseAmount($('hold-quantity').value), pru = parseAmount($('hold-pru').value);
-      const inv = pru !== null && q > 0 ? q * pru : parseAmount($('hold-invested').value);
-      if (!(inv > 0)) return;
-      const r2 = (x) => Math.round(x * 100) / 100;
-      let value = parseAmount($('hold-value').value);
-      if (from === 'pnl') { const p = parseAmount($('hold-pnl').value); if (p === null) return; value = inv + p; }
-      if (from === 'pct') { const p = parseAmount($('hold-pnl-pct').value); if (p === null) return; value = inv * (1 + p / 100); }
-      if (value === null) return;
-      if (from !== 'value') $('hold-value').value = numToInput(r2(value));
-      if (from !== 'pnl') $('hold-pnl').value = numToInput(r2(value - inv));
-      if (from !== 'pct') $('hold-pnl-pct').value = numToInput(r2((value - inv) / inv * 100));
+    // « Copier Trade Republic » : on retient quels champs l'utilisateur a remplis ; le 3e est calculé.
+    const trFilled = { value: false, gain: false, pct: false };
+    const TR_IDS = { value: 'hold-value', gain: 'hold-pnl', pct: 'hold-pnl-pct' };
+    function readTradeRepublic() {
+      const get = (k) => (trFilled[k] ? parseAmount($(TR_IDS[k]).value) : null);
+      let value = get('value'), gain = get('gain'), pct = get('pct');
+      if (value !== null && gain !== null) pct = null;          // priorité valeur + gain €
+      else if (value !== null && pct !== null) gain = null;
+      return fromTradeRepublic({ value, gain, pct });
     }
-    $('hold-value').addEventListener('input', () => syncManualValue('value'));
-    $('hold-pnl').addEventListener('input', () => syncManualValue('pnl'));
-    $('hold-pnl-pct').addEventListener('input', () => syncManualValue('pct'));
-    for (const id of ['hold-quantity', 'hold-pru', 'hold-invested']) $(id).addEventListener('input', () => syncManualValue('value'));
+    function syncTradeRepublic(from) {
+      if (from) trFilled[from] = $(TR_IDS[from]).value.trim() !== '';
+      // Trois champs remplis à la main : on garde valeur + gain €, le % redevient calculé
+      if (trFilled.value && trFilled.gain && trFilled.pct) trFilled[from === 'pct' ? 'gain' : 'pct'] = false;
+      const r = readTradeRepublic();
+      const fmt = (x) => numToInput(Math.round(x * 100) / 100);
+      for (const k of ['value', 'gain', 'pct']) {
+        if (!trFilled[k]) $(TR_IDS[k]).value = r ? fmt(r[k]) : '';
+      }
+      const box = $('hold-tr-result');
+      box.innerHTML = r
+        ? `Investi déduit : <strong>${money(r.invested)}</strong> · gain <span class="${r.gain < 0 ? 'neg' : 'pos'}">${r.gain < 0 ? '−' : '+'}${money(Math.abs(r.gain))}
+           (${r.gain < 0 ? '−' : '+'}${fmtGainPct.format(Math.abs(r.pct) / 100)})</span>`
+        : 'Investi déduit : — (remplis 2 des 3 champs)';
+    }
+    function resetTradeRepublic(h) {
+      trFilled.value = trFilled.gain = trFilled.pct = false;
+      if (h && h.manual_value !== null && h.manual_value !== undefined) {
+        const inv = holdingInvested(h);
+        $('hold-value').value = numToInput(Number(h.manual_value));
+        $('hold-pnl').value = numToInput(Math.round((Number(h.manual_value) - inv) * 100) / 100);
+        trFilled.value = trFilled.gain = inv > 0;
+      } else { $('hold-value').value = ''; $('hold-pnl').value = ''; }
+      $('hold-pnl-pct').value = '';
+      syncTradeRepublic(null);
+    }
+    $('hold-value').addEventListener('input', () => syncTradeRepublic('value'));
+    $('hold-pnl').addEventListener('input', () => syncTradeRepublic('gain'));
+    $('hold-pnl-pct').addEventListener('input', () => syncTradeRepublic('pct'));
     for (const id of ['hold-type', 'hold-mode', 'hold-distribution']) $(id).addEventListener('change', syncHoldingForm);
     $('hold-type').addEventListener('change', () => { $('hold-mode').value = $('hold-type').value === 'crypto' ? 'auto' : 'saisie'; syncHoldingForm(); });
     $('hold-quantity').addEventListener('input', () => syncInvested('qty'));
@@ -2927,6 +2997,8 @@
 
     // ================== Budget : chargement partagé ==================
     const fmtPercent = new Intl.NumberFormat('fr-FR', { style: 'percent', maximumFractionDigits: 1 });
+    // Gains / pertes : 2 décimales, comme Trade Republic (+6,84 %, −5,00 %)
+    const fmtGainPct = new Intl.NumberFormat('fr-FR', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const isoDate = (d = new Date()) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const memberName = (uid) => { const m = state.members.find((x) => x.user_id === uid); return m ? m.first_name : ''; };
@@ -4314,7 +4386,7 @@
                   <div class="bar done"><span style="width:${Math.max(0, pct * 100)}%"></span></div>
                   <div class="cat-sub"><span>${sp === 'perso' ? '<span class="tag">Privé</span>' : '<span class="tag tag-third">Commun</span>'}
                     ${typeInfo(a.type).label}${v && v.complete && v.pnlPct !== null
-                      ? ` · <span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))} (${v.pnl >= 0 ? '+' : '−'}${fmtPercent.format(Math.abs(v.pnlPct))})</span>` : ''}</span>
+                      ? ` · <span class="${v.pnl >= 0 ? 'pos' : 'neg'}">${v.pnl >= 0 ? '+' : '−'}${money(Math.abs(v.pnl))} (${v.pnl >= 0 ? '+' : '−'}${fmtGainPct.format(Math.abs(v.pnlPct))})</span>` : ''}</span>
                     <span>${fmtPercent.format(pct)}</span></div>
                 </div>`;
               }).join('') : '<p class="muted">Aucun compte pour l’instant.</p>'}
