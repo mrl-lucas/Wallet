@@ -39,6 +39,8 @@
       --wool-text: #ffffff;
       --danger: #a33a2b;
       --ok: #2e6b4f;
+      --warn: #c27410;          /* jauge 80–99 % */
+      --full: #2f5d8a;          /* jauge pleine */
       --shadow: 0 1px 2px rgba(28,35,33,.05), 0 8px 24px rgba(28,35,33,.05);
       --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       --font-display: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino, Georgia, serif;
@@ -50,14 +52,14 @@
         --bg: #111513; --surface: #191e1c; --surface-2: #222926; --text: #e9e7e0; --muted: #9aa59f;
         --border: #2b3330; --accent: #7cc2a6; --accent-soft: #1d3129; --accent-text: #0c1a14;
         --wool: #dba862; --wool-soft: #33291b; --wool-text: #1c1307;
-        --danger: #f0a597; --ok: #7cc2a6; --shadow: none; color-scheme: dark;
+        --danger: #f0a597; --ok: #7cc2a6; --warn: #f0b766; --full: #8fb6e0; --shadow: none; color-scheme: dark;
       }
     }
     :root[data-theme="dark"] {
       --bg: #111513; --surface: #191e1c; --surface-2: #222926; --text: #e9e7e0; --muted: #9aa59f;
       --border: #2b3330; --accent: #7cc2a6; --accent-soft: #1d3129; --accent-text: #0c1a14;
       --wool: #dba862; --wool-soft: #33291b; --wool-text: #1c1307;
-      --danger: #f0a597; --ok: #7cc2a6; --shadow: none; color-scheme: dark;
+      --danger: #f0a597; --ok: #7cc2a6; --warn: #f0b766; --full: #8fb6e0; --shadow: none; color-scheme: dark;
     }
     /* Couleur de l'espace actif : vert pour Mon espace, ocre pour Commun */
     :root { --space: var(--accent); --space-soft: var(--accent-soft); --space-text: var(--accent-text); }
@@ -372,6 +374,19 @@
 
     .proj-sentence { font: 500 1.05rem/1.45 var(--font-display); margin: 0 0 12px; }
     .proj-sentence strong { color: var(--space); }
+
+    /* ---------- Jauges de plafond ---------- */
+    .gauge-block { display: block; padding: 0 0 12px; }
+    .gauge-top, .gauge-sub { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: .84rem; }
+    .gauge-top .num { color: var(--muted); }
+    .gauge-sub { color: var(--muted); font-size: .8rem; }
+    .gauge { display: block; height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin: 5px 0 4px;
+             border: 1px solid var(--border); }
+    .gauge > span { display: block; height: 100%; border-radius: 99px; background: var(--ok); }
+    .gauge-near > span { background: var(--warn); }
+    .gauge-full > span { background: var(--full); }
+    .gauge-full + .gauge-sub strong { color: var(--full); }
+    .gauge-note { display: block; font-size: .78rem; color: var(--muted); font-style: italic; margin-top: 2px; }
 
     /* ---------- Vue d'ensemble ---------- */
     .group-head { display: flex; justify-content: space-between; margin: 14px 0 2px; font-size: .76rem; font-weight: 700;
@@ -1113,6 +1128,29 @@
         target3: 3 * monthlyExpenses,
         target6: 6 * monthlyExpenses,
       };
+    }
+    // Jauge de plafond d'un compte.
+    //  - livret (plafond sur le solde) : simulation mois par mois avec intérêts (taux/12), arrêt au plafond ;
+    //  - PEA (plafond sur les versements) : sur le montant investi, versements seuls, sans gains.
+    // months = nombre de mois avant d'être plein (0 si déjà plein, null si aucun versement prévu).
+    function capGauge({ balance, invested, monthly, rate, cap, onContributions }) {
+      cap = Number(cap);
+      if (!(cap > 0)) return null;
+      const current = Number(onContributions ? invested : balance) || 0;
+      const pct = current / cap;
+      const full = current >= cap - 0.005;
+      monthly = Math.max(0, Number(monthly) || 0);
+      let months = full ? 0 : null;
+      if (!full && monthly > 0) {
+        let b = current;
+        for (let m = 1; m <= 1200; m++) {
+          if (!onContributions) b *= 1 + (Number(rate) || 0) / 100 / 12;   // les intérêts comptent pour un livret
+          b += Math.min(monthly, Math.max(0, cap - b));
+          if (b >= cap - 0.005) { months = m; break; }
+        }
+      }
+      return { current, cap, pct, left: Math.max(0, cap - current), full, months, onContributions: !!onContributions,
+               level: full ? 'full' : pct >= 0.8 ? 'near' : 'ok' };
     }
     // </projection>
 
@@ -2061,6 +2099,33 @@
       },
     };
 
+    // Jauge de plafond d'un compte (valeur du jour déjà dans a.balance ; v = positions éventuelles)
+    function capGaugeFor(a, v) {
+      const onContributions = !!typeInfo(a.type).capOnContributions;
+      return capGauge({
+        balance: a.balance,
+        // PEA : somme des versements = investi des positions (sinon le solde saisi du compte)
+        invested: v ? v.invested : (a.stored_balance ?? a.balance),
+        monthly: v ? v.monthly : a.monthly_contribution,
+        rate: a.annual_rate, cap: a.cap, onContributions,
+      });
+    }
+    function gaugeHTML(a, v) {
+      const g = capGaugeFor(a, v);
+      if (!g) return '';
+      const pct = Math.min(1, g.pct);
+      const when = g.full ? '<strong>Plein ✓</strong>' : g.months === null ? 'Aucun virement prévu'
+        : `Plein dans ${g.months} mois (${fmtMonth.format(addMonths(monthStart(), g.months))})${g.months >= 24 ? ` · ≈ ${years(Math.round(g.months / 12))}` : ''}`;
+      return `<span class="gauge-block">
+          <span class="gauge-top"><span>${esc(a.name)} · rempli à <strong>${fmtPercent.format(pct)}</strong></span>
+            <span class="num">${fmtEUR0.format(g.current)} / ${fmtEUR0.format(g.cap)}</span></span>
+          <span class="gauge gauge-${g.level}" role="progressbar" aria-label="Plafond ${esc(a.name)}"
+                aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct * 100)}"><span style="width:${pct * 100}%"></span></span>
+          <span class="gauge-sub"><span>${g.full ? 'Plafond atteint' : `Reste ${money(g.left)} à verser`}</span><span>${when}</span></span>
+          ${g.onContributions ? '<span class="gauge-note">Le plafond porte sur tes versements, pas sur les gains.</span>' : ''}
+        </span>`;
+    }
+
     // Prix de l'indice (en €) servant de référence lors d'une saisie de valeur ; null si indisponible.
     async function indexReference(symbol) {
       const p = (await Prices.get([{ asset_type: 'etf', symbol }]))['td:' + symbol];
@@ -2330,7 +2395,7 @@
         if (info.locked) tags.push('<span class="tag tag-warn">Bloqué 5 ans</span>');
         if (info.peaRule) tags.push('<span class="tag tag-warn">Retrait avant 5 ans : avantage fiscal perdu</span>');
         if (v && v.complete && v.pnlPct !== null && v.investedValued > 0) tags.push(`<span class="tag ${v.pnl >= 0 ? 'tag-gain' : 'tag-loss'}">${v.pnl >= 0 ? '+' : '−'}${fmtEUR0.format(Math.abs(v.pnl))} (${v.pnl >= 0 ? '+' : '−'}${fmtGainPct.format(Math.abs(v.pnlPct))})</span>`);
-        if (a.cap !== null && !info.capOnContributions && Number(a.balance) >= Number(a.cap)) tags.push('<span class="tag tag-warn">Plafond atteint</span>');
+        // (plafond : voir la jauge sous le compte)
         return `
           <li><button type="button" class="acc-row" data-action="edit-account" data-id="${a.id}">
             <span>
@@ -2339,7 +2404,7 @@
               ${tags.length ? `<span class="acc-tags">${tags.join('')}</span>` : ''}
             </span>
             <span class="acc-bal">${money(a.balance)}</span>
-          </button></li>`;
+          </button>${gaugeHTML(a, this.vals[a.id])}</li>`;
       },
 
       // Lignes de projection : comptes classiques tels quels ; comptes à positions détaillés position par
@@ -4390,6 +4455,9 @@
                     <span>${fmtPercent.format(pct)}</span></div>
                 </div>`;
               }).join('') : '<p class="muted">Aucun compte pour l’instant.</p>'}
+
+              ${sp === 'perso' && list.some((a) => capGaugeFor(a, vals[a.id])) ? `<div class="group-head"><span>Mes plafonds</span><span>privé</span></div>
+                ${list.filter((a) => capGaugeFor(a, vals[a.id])).map((a) => gaugeHTML(a, vals[a.id])).join('')}` : ''}
 
               ${list.length ? `<div class="group-head"><span>Projection</span><span>capital</span></div>
                 ${HORIZONS.map((y) => `<div class="kv"><span>${years(y)}</span><span>${fmtEUR0.format(proj.points[y * 12].total)}</span></div>`).join('')}` : ''}
