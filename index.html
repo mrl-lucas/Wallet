@@ -388,6 +388,13 @@
     .gauge-full + .gauge-sub strong { color: var(--full); }
     .gauge-note { display: block; font-size: .78rem; color: var(--muted); font-style: italic; margin-top: 2px; }
 
+    /* ---------- Mettre à jour mon mois ---------- */
+    .month-row { padding: 10px 0; border-top: 1px solid var(--border); }
+    .month-row:first-child { border-top: 0; }
+    .month-row .grid2 label { margin-top: 6px; }
+    .month-calc { display: block; font-size: .84rem; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .month-cta { margin-top: 16px; }
+
     /* ---------- Vue d'ensemble ---------- */
     .group-head { display: flex; justify-content: space-between; margin: 14px 0 2px; font-size: .76rem; font-weight: 700;
                   text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -691,6 +698,19 @@
         </form>
       </dialog>
 
+      <!-- « Mettre à jour mon mois » : une ligne par compte, validation + relevé en une fois -->
+      <dialog id="month-dialog" class="sheet" aria-labelledby="month-title">
+        <form id="month-form" novalidate>
+          <h2 id="month-title">Mettre à jour mon mois</h2>
+          <p class="muted" id="month-intro"></p>
+          <div id="month-list"></div>
+          <p class="income-sum" id="month-summary"></p>
+          <p id="month-msg" class="msg" role="status"></p>
+          <button class="btn-primary" type="submit">Valider le mois</button>
+          <div class="row"><button type="button" class="btn-ghost" id="month-cancel">Annuler</button></div>
+        </form>
+      </dialog>
+
       <!-- Relevé du mois : mise à jour des valeurs saisies -->
       <dialog id="values-dialog" class="sheet" aria-labelledby="values-title">
         <form id="values-form" novalidate>
@@ -927,6 +947,15 @@
           <input id="set-share" inputmode="decimal" autocomplete="off" placeholder="50">
           <button class="btn-primary" type="submit">Enregistrer ma part</button>
           <p id="share-msg" class="msg" role="status"></p>
+        </form>
+
+        <form id="form-inflation" class="card" novalidate>
+          <h2>Inflation</h2>
+          <p class="muted">Sert à l’option « En euros d’aujourd’hui » des projections. Réglage personnel.</p>
+          <label for="set-inflation">Inflation annuelle (%)</label>
+          <input id="set-inflation" inputmode="decimal" autocomplete="off" placeholder="2">
+          <button class="btn-primary" type="submit">Enregistrer</button>
+          <p id="inflation-msg" class="msg" role="status"></p>
         </form>
 
         <form id="form-prices" class="card" novalidate>
@@ -1530,13 +1559,37 @@
         contributions_base: val.invested,
       }));
     }
+    // Euros d'aujourd'hui : valeur projetée ÷ (1 + inflation)^(années)
+    const deflate = (value, months, inflationPct) => value / Math.pow(1 + (Number(inflationPct) || 0) / 100, months / 12);
+
+    // « Mettre à jour mon mois » — position en valeur saisie (ETF / actions) :
+    // investi = investi d'avant + versement du mois ; ou, si le gain € de Trade Republic est saisi, investi = valeur − gain.
+    // Calcul en centimes, sans arrondi intermédiaire.
+    function monthPosition({ investedBefore, contribution = 0, value, gain = null }) {
+      if (value === null || value === undefined || Number.isNaN(value)) return null;
+      const c = (x) => Math.round(Number(x) * 100);
+      const investedC = gain !== null ? c(value) - c(gain) : c(investedBefore) + c(contribution || 0);
+      if (investedC <= 0) return null;
+      const gainC = c(value) - investedC;
+      return { value: c(value) / 100, invested: investedC / 100, contribution: (investedC - c(investedBefore)) / 100,
+               gain: gainC / 100, pct: gainC / investedC * 100 };
+    }
+
+    // Résumé du mois : variation totale, dont versements, dont gains / pertes. rows : [{ before, after, paid }]
+    function monthSummary(rows) {
+      const c = (x) => Math.round((Number(x) || 0) * 100);
+      const before = rows.reduce((s, r) => s + c(r.before), 0);
+      const after = rows.reduce((s, r) => s + c(r.after), 0);
+      const paid = rows.reduce((s, r) => s + c(r.paid), 0);
+      return { before: before / 100, after: after / 100, delta: (after - before) / 100, paid: paid / 100, gains: (after - before - paid) / 100 };
+    }
     // </holdings>
 
     // ================== Couche de données ==================
     // Tables « à espace » : chaque ligne porte household_id + scope + user_id.
     // db.insert les remplit tout seul selon l'espace actif ; la RLS fait le reste côté base.
     const SCOPED_TABLES = ['ep_accounts', 'ep_budget_lines', 'ep_month_overrides',
-                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals', 'ep_holdings', 'ep_settlements'];
+                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals', 'ep_holdings', 'ep_settlements', 'ep_month_closes'];
     const db = {
       isScoped: (table) => SCOPED_TABLES.includes(table),
 
@@ -1697,7 +1750,7 @@
       // La RLS ne renvoie que MA ligne de membre (et celle de mon/ma partenaire).
       const { data: me, error } = await sb
         .from('ep_members')
-        .select('household_id, first_name, slot, common_share, ep_households(id, name, invite_code)')
+        .select('household_id, first_name, slot, common_share, inflation_rate, ep_households(id, name, invite_code)')
         .eq('user_id', state.user.id)
         .maybeSingle();
       if (error) throw error;
@@ -1747,6 +1800,7 @@
       if (document.activeElement !== $('set-firstname')) $('set-firstname').value = state.member.first_name;
       if (document.activeElement !== $('set-household')) $('set-household').value = state.household.name;
       if (document.activeElement !== $('set-share')) $('set-share').value = numToInput(commonShare());
+      if (document.activeElement !== $('set-inflation')) $('set-inflation').value = numToInput(inflationRate());
       $('set-tdkey').placeholder = getTwelveKey() ? 'clé enregistrée sur cet appareil' : 'non renseignée';
       $('set-email').textContent = state.user.email;
 
@@ -2099,6 +2153,18 @@
       },
     };
 
+    // Bouton « Mettre à jour mon mois » + bandeau de rappel du 1er au 5 si le mois n'est pas validé
+    function monthCtaHTML(close) {
+      const day = new Date().getDate();
+      const month = fmtMonth.format(monthStart());
+      return `<div class="month-cta">
+        ${!close && day <= 5 ? `<ul class="alerts" style="margin-bottom:10px"><li class="warn">Nous sommes le ${day} :
+          pense à mettre à jour ${month} (valeurs Trade Republic, versements, soldes).</li></ul>` : ''}
+        <button type="button" class="btn-primary" data-action="open-month" style="margin-top:0">
+          ${close ? `${month} validé ✓ · modifier` : `Mettre à jour mon mois (${month})`}</button>
+      </div>`;
+    }
+
     // Jauge de plafond d'un compte (valeur du jour déjà dans a.balance ; v = positions éventuelles)
     function capGaugeFor(a, v) {
       const onContributions = !!typeInfo(a.type).capOnContributions;
@@ -2190,7 +2256,7 @@
       autre:         { label: 'Autre', hint: '' },
     };
     const LIQUID_TYPES = ['courant', 'livret_a', 'ldds'];   // épargne disponible (fonds d'urgence)
-    const HORIZONS = [1, 5, 10, 20];
+    const HORIZONS = [1, 5, 10, 20, 30];
     const typeInfo = (t) => ACCOUNT_TYPES[t] || ACCOUNT_TYPES.autre;
     const numToInput = (n) => (n === null || n === undefined ? '' : String(Number(n)).replace('.', ','));
     const sumBy = (list, f) => list.reduce((s, x) => s + (Number(f(x)) || 0), 0);
@@ -2209,6 +2275,7 @@
 
     const Savings = {
       root: null, accounts: [], snapshots: [], plan: null, vals: {}, returnMode: 'manuel', editingHolding: null, showDetail: false,
+      realEuros: (() => { try { return localStorage.getItem('ep_real_euros') === '1'; } catch (e) { return false; } })(),
       horizon: 10,                          // années affichées sur le graphique
       extra: { accountId: null, amount: 0 }, // effort simulé (jamais enregistré)
       chart: null, loadToken: 0, editing: null, prevType: null,
@@ -2225,12 +2292,14 @@
           const accounts = real.accounts;
           this.vals = real.vals;
           this.prices = real.prices;
-          const [snapshots, plan] = await Promise.all([
+          const [snapshots, plan, closes] = await Promise.all([
             accounts.length
               ? db.list('ep_balance_snapshots', { filters: { account_id: accounts.map((a) => a.id) }, order: 'month' })
               : [],
             loadPlan(),   // budget par défaut → dépenses prévues pour le fonds d'urgence
+            db.list('ep_month_closes', { filters: { month: isoMonth(monthStart()) } }),
           ]);
+          this.monthClose = closes[0] || null;
           if (token !== this.loadToken) return;   // l'espace a changé pendant le chargement
           Object.assign(this, { accounts, snapshots, plan });
           if (!accounts.some((a) => a.id === this.extra.accountId)) this.extra.accountId = accounts[0] ? accounts[0].id : null;
@@ -2258,6 +2327,7 @@
           if (action === 'add-holding') this.openHolding(null, el.dataset.account);
           if (action === 'edit-holding') this.openHolding(el.dataset.id);
           if (action === 'refresh-prices') { this.forcePrices = true; this.mount(this.root); }
+          if (action === 'open-month') return this.openMonth();
           if (action === 'toggle-detail') {
             this.showDetail = !this.showDetail;
             $('proj-detail').hidden = !this.showDetail;
@@ -2277,6 +2347,11 @@
           this.updateProjection();
         });
         root.addEventListener('change', (e) => {
+          if (e.target.dataset.action === 'real-euros') {
+            this.realEuros = e.target.checked;
+            try { localStorage.setItem('ep_real_euros', this.realEuros ? '1' : '0'); } catch (err) {}
+            return this.updateProjection();
+          }
           if (e.target.id !== 'extra-account') return;
           this.extra.accountId = e.target.value;
           this.updateProjection();
@@ -2303,6 +2378,7 @@
         const historyMonths = new Set(this.snapshots.map((s) => s.month)).size;
 
         this.root.innerHTML = `
+          ${monthCtaHTML(this.monthClose)}
           <div class="kpis">
             <div class="kpi">
               <div class="kpi-label">Épargne totale</div>
@@ -2363,6 +2439,8 @@
                 ${[['manuel', 'Mes rendements'], ['scenarios', 'Scénario probable']].map(([m, l]) =>
                   `<button type="button" role="radio" data-action="return-mode" data-mode="${m}" aria-checked="${m === this.returnMode}">${l}</button>`).join('')}
               </div>` : ''}
+            <label class="check" style="margin-top:12px"><input type="checkbox" data-action="real-euros" ${this.realEuros ? 'checked' : ''}>
+              En euros d’aujourd’hui <span class="muted small">(inflation ${fmtPct(inflationRate())}, réglable dans Réglages)</span></label>
             <div class="chart-box"><canvas id="savings-chart" role="img" aria-label="Graphique : le réel jusqu’à aujourd’hui, puis la projection probable et sa fourchette"></canvas></div>
             <button type="button" class="btn-ghost w100" data-action="toggle-detail" style="margin-top:8px">${this.showDetail ? 'Masquer le détail' : 'Voir le détail'}</button>
             <div id="proj-detail" ${this.showDetail ? '' : 'hidden'}>
@@ -2423,7 +2501,7 @@
         let extra = this.extra.amount > 0 && this.extra.accountId ? { ...this.extra } : null;
         // Effort sur un compte à positions : ajouté à sa première position
         if (extra && this.vals[extra.accountId] && this.vals[extra.accountId].complete) extra.accountId = this.vals[extra.accountId].lines[0].h.id;
-        const months = 20 * 12;
+        const months = 30 * 12;
         const full = projectSavings(this.projectionAccounts(1), months, extra);
         // Fourchette : scénarios prudent / favorable, uniquement s'il y a des placements à risque
         const range = this.hasRisk()
@@ -2435,15 +2513,19 @@
         const k = this.horizon * 12;
         const about = (x) => fmtEUR0.format(Math.round(x / 100) * 100);
         const perso = state.space === 'perso';
+        const inf = inflationRate();
+        const real = (i, x) => (this.realEuros ? deflate(x, i, inf) : x);   // euros d'aujourd'hui si demandé
         $('proj-sentence').innerHTML = `Dans <strong>${years(this.horizon)}</strong>, ${perso ? 'tu devrais' : 'vous devriez'} avoir environ
           <strong>${about(full.points[k].total)}</strong>${range ? ` (entre ${about(low(k))} et ${about(high(k))} selon les marchés)` : ''},
-          dont ${fmtEUR0.format(full.points[k].contributed)} versés par ${perso ? 'toi' : 'vous'}.`;
+          dont ${fmtEUR0.format(full.points[k].contributed)} versés par ${perso ? 'toi' : 'vous'}${this.realEuros
+            ? `, soit environ <strong>${about(deflate(full.points[k].total, k, inf))}</strong> en pouvoir d’achat d’aujourd’hui` : ''}.`;
 
         $('proj-body').innerHTML = HORIZONS.map((y) => {
           const p = full.points[y * 12];
           return `<tr class="${y === this.horizon ? 'is-current' : ''}">
             <td>${years(y)}</td><td>${fmtEUR0.format(p.total)}${range
-              ? `<span class="delta muted">${fmtCompact.format(low(y * 12))}–${fmtCompact.format(high(y * 12))} €</span>` : ''}</td>
+              ? `<span class="delta muted">${fmtCompact.format(low(y * 12))}–${fmtCompact.format(high(y * 12))} €</span>` : ''}${this.realEuros
+              ? `<span class="delta">≈ ${fmtEUR0.format(deflate(p.total, y * 12, inf))} d’auj.</span>` : ''}</td>
             <td>${fmtEUR0.format(p.contributed)}</td><td>${fmtEUR0.format(p.interest)}</td></tr>`;
         }).join('');
         if ($('return-hint')) {
@@ -2452,7 +2534,9 @@
             : 'Projection probable : scénario probable. ')
             + (range ? 'Fourchette prudent ↔ favorable : ETF 2 / 5 / 8 %, actions 0 / 5 / 10 %, crypto −15 / 5 / 25 %, autres placements en bourse 2 / 5 / 8 % par an. Livrets et comptes courants : pas de fourchette.' : '');
         }
-        this.drawChart(full, range ? { low: full.points.map((_, i) => low(i)), high: full.points.map((_, i) => high(i)) } : null);
+        // Graphique : projection, fourchette et versements seuls en euros d'aujourd'hui si demandé
+        const view = { start: full.start, points: full.points.map((p, i) => ({ total: real(i, p.total), contribLine: real(i, full.start + p.contributed) })) };
+        this.drawChart(view, range ? { low: full.points.map((_, i) => real(i, low(i))), high: full.points.map((_, i) => real(i, high(i))) } : null);
         this.renderAlerts(full);
       },
 
@@ -2473,7 +2557,7 @@
           real.push(r === undefined ? null : r);
           const p = i >= 0 ? full.points[i] : null;
           proj.push(p ? p.total : null);
-          contrib.push(p ? full.start + p.contributed : null);
+          contrib.push(p ? (p.contribLine ?? full.start + p.contributed) : null);
           low.push(range && i >= 0 ? range.low[i] : null);
           high.push(range && i >= 0 ? range.high[i] : null);
         }
@@ -2883,6 +2967,189 @@
       },
 
       // Enregistre le solde de chaque compte pour le mois en cours (met à jour si déjà relevé).
+      // ================= « Mettre à jour mon mois » =================
+      // État AVANT la 1re validation du mois (gardé dans ep_month_closes.details) : une 2e validation
+      // repart de cet état, les versements ne sont donc jamais comptés deux fois.
+      monthBefore() {
+        if (this.monthClose && this.monthClose.details && this.monthClose.details.accounts) return this.monthClose.details;
+        const thisMonth = isoMonth(monthStart());
+        const prevSnap = (id) => this.snapshots.filter((sn) => sn.account_id === id && sn.month < thisMonth)
+          .sort((x, y) => y.month.localeCompare(x.month))[0];
+        const details = { accounts: {}, holdings: {} };
+        for (const a of this.accounts) {
+          const v = this.vals[a.id];
+          const snap = prevSnap(a.id);
+          details.accounts[a.id] = { balance: Number(a.stored_balance ?? a.balance) || 0,
+                                     value: snap ? Number(snap.balance) : Number(a.balance) || 0 };
+          if (v) for (const h of v.holdings) details.holdings[h.id] = { invested: holdingInvested(h), quantity: numOrNull(h.quantity) };
+        }
+        return details;
+      },
+
+      openMonth() {
+        if (!this.accounts.length) return alert('Ajoute d’abord un compte dans Épargne.');
+        const before = this.monthBefore();
+        const closed = !!this.monthClose;
+        const saved = closed ? this.monthClose.details.inputs || {} : {};
+        const lines = Object.values(this.vals).flatMap((v) => v.lines);
+        const r2 = (x) => Math.round(x * 100) / 100;
+        $('month-title').textContent = `Mettre à jour ${fmtMonth.format(monthStart())}`;
+        $('month-intro').textContent = closed
+          ? 'Ce mois est déjà validé : tes corrections remplacent la validation précédente, sans doubler les versements.'
+          : 'Recopie ce que tu lis dans Trade Republic et sur tes comptes. Les versements prévus sont déjà comptés : corrige-les si besoin.';
+        $('month-list').innerHTML = this.accounts.map((a) => {
+          const v = this.vals[a.id];
+          if (!v) {
+            const b = before.accounts[a.id] || { balance: Number(a.balance) || 0 };
+            const prefill = closed ? Number(a.stored_balance ?? a.balance) : b.balance + (Number(a.monthly_contribution) || 0);
+            return `<div class="month-row" data-month-account="${a.id}">
+              <div class="cat-top"><span class="cat-name">${esc(a.name)}</span><span class="muted small">${typeInfo(a.type).label}</span></div>
+              <label for="m-bal-${a.id}">Solde (${money(b.balance)} + ${money(a.monthly_contribution)} prévus)</label>
+              <input id="m-bal-${a.id}" data-m="balance" inputmode="decimal" autocomplete="off" value="${numToInput(r2(prefill))}">
+              <span class="month-calc" data-m-out></span>
+            </div>`;
+          }
+          return `<div class="month-row"><div class="cat-top"><span class="cat-name">${esc(a.name)}</span><span class="muted small">${typeInfo(a.type).label}</span></div>
+            ${v.holdings.map((h) => {
+              const hb = before.holdings[h.id] || { invested: holdingInvested(h), quantity: numOrNull(h.quantity) };
+              const inp = saved[h.id] || {};
+              const contribution = inp.contribution ?? (Number(h.monthly_contribution) || 0);
+              const l = lines.find((x) => x.h.id === h.id) || {};
+              if (priceMode(h) === 'saisie') {
+                const value = closed ? Number(h.manual_value) : (l.value ?? Number(h.manual_value));
+                return `<div class="month-row" data-month-holding="${h.id}" data-kind="saisie">
+                  <span class="muted small">${esc(h.label || h.symbol)} · investi avant ${money(hb.invested)}</span>
+                  <div class="grid2">
+                    <div><label for="m-c-${h.id}">Versé ce mois (€)</label>
+                      <input id="m-c-${h.id}" data-m="contribution" inputmode="decimal" autocomplete="off" value="${numToInput(contribution)}"></div>
+                    <div><label for="m-v-${h.id}">Valeur Trade Republic (€)</label>
+                      <input id="m-v-${h.id}" data-m="value" inputmode="decimal" autocomplete="off" value="${numToInput(r2(value))}"></div>
+                    <div data-m-gainbox hidden><label for="m-g-${h.id}">Gain € Trade Republic</label>
+                      <input id="m-g-${h.id}" data-m="gain" inputmode="text" autocomplete="off" placeholder="ex. 168,27 ou -50"></div>
+                  </div>
+                  <button type="button" class="link-btn" data-m-toggle>saisir le gain € à la place</button>
+                  <span class="month-calc" data-m-out></span>
+                </div>`;
+              }
+              const p = this.prices && this.prices[priceKey(h)];
+              return `<div class="month-row" data-month-holding="${h.id}" data-kind="auto" data-price="${p && Number.isFinite(p.eur) ? p.eur : ''}">
+                <span class="muted small">${esc(h.label || h.symbol)} · prix automatique · investi avant ${money(hb.invested)}</span>
+                <div class="grid2">
+                  <div><label for="m-c-${h.id}">Versé ce mois (€)</label>
+                    <input id="m-c-${h.id}" data-m="contribution" inputmode="decimal" autocomplete="off" value="${numToInput(contribution)}"></div>
+                  <div><label for="m-q-${h.id}">Quantité totale (facultatif)</label>
+                    <input id="m-q-${h.id}" data-m="quantity" inputmode="decimal" autocomplete="off"
+                      placeholder="${hb.quantity === null ? '—' : numToInput(hb.quantity)}" value="${inp.quantity !== undefined && inp.quantity !== null ? numToInput(inp.quantity) : ''}"></div>
+                </div>
+                <span class="month-calc" data-m-out></span>
+              </div>`;
+            }).join('')}</div>`;
+        }).join('');
+        setMsg($('month-msg'), '');
+        this.updateMonth();
+        $('month-dialog').showModal();
+      },
+
+      // Lit l'écran, calcule chaque ligne et le résumé. Renvoie null (avec message) si une saisie est illisible.
+      collectMonth({ show = true } = {}) {
+        const before = this.monthBefore();
+        const num = (el) => { const raw = el ? el.value.trim() : ''; return raw === '' ? null : parseAmount(raw); };
+        const sign = (x) => (x < 0 ? '−' : '+');
+        const out = { holdings: [], accounts: [], rows: [], error: null };
+        const perAccount = {};
+        for (const row of $('month-list').querySelectorAll('[data-month-holding]')) {
+          const id = row.dataset.monthHolding;
+          const h = Object.values(this.vals).flatMap((v) => v.holdings).find((x) => x.id === id);
+          const hb = before.holdings[id] || { invested: holdingInvested(h), quantity: numOrNull(h.quantity) };
+          const contribution = num(row.querySelector('[data-m=contribution]')) ?? 0;
+          let res, value;
+          if (row.dataset.kind === 'saisie') {
+            const gainBox = row.querySelector('[data-m-gainbox]');
+            const gain = gainBox.hidden ? null : num(row.querySelector('[data-m=gain]'));
+            value = num(row.querySelector('[data-m=value]'));
+            res = monthPosition({ investedBefore: hb.invested, contribution, value, gain: gainBox.hidden ? null : gain });
+            if (!res || (!gainBox.hidden && gain === null)) { out.error = out.error || `${h.label || h.symbol} : valeur ou gain illisible.`; continue; }
+          } else {
+            const q = num(row.querySelector('[data-m=quantity]'));
+            const quantity = q ?? hb.quantity;
+            const price = Number(row.dataset.price);
+            const investedC = Math.round(hb.invested * 100) + Math.round(contribution * 100);
+            value = Number.isFinite(price) && price > 0 && quantity ? quantity * price : null;
+            res = { value, invested: investedC / 100, contribution, quantity, gain: value === null ? null : value - investedC / 100 };
+            res.pct = res.gain === null || investedC <= 0 ? null : res.gain / (investedC / 100) * 100;
+          }
+          out.holdings.push({ id, h, res });
+          perAccount[h.account_id] = perAccount[h.account_id] || { after: 0, paid: 0 };
+          perAccount[h.account_id].after += res.value ?? 0;
+          perAccount[h.account_id].paid += res.contribution;
+          if (show) row.querySelector('[data-m-out]').innerHTML = res.gain === null
+            ? `Investi ${money(res.invested)} · prix indisponible`
+            : `Investi ${money(res.invested)} · gain <span class="${res.gain < 0 ? 'neg' : 'pos'}">${sign(res.gain)}${money(Math.abs(res.gain))}
+               (${sign(res.gain)}${fmtGainPct.format(Math.abs(res.pct) / 100)})</span>`;
+        }
+        for (const row of $('month-list').querySelectorAll('[data-month-account]')) {
+          const id = row.dataset.monthAccount;
+          const b = before.accounts[id] || { balance: 0 };
+          const balance = num(row.querySelector('[data-m=balance]'));
+          if (balance === null) { out.error = out.error || 'Un solde est illisible.'; continue; }
+          out.accounts.push({ id, balance });
+          perAccount[id] = { after: balance, paid: balance - b.balance };
+          if (show) row.querySelector('[data-m-out]').textContent = `${balance - b.balance >= 0 ? '+' : '−'}${money(Math.abs(balance - b.balance))} par rapport au solde précédent`;
+        }
+        out.rows = Object.entries(perAccount).map(([id, x]) => ({ before: (before.accounts[id] || {}).value || 0, after: x.after, paid: x.paid }));
+        out.summary = monthSummary(out.rows);
+        out.before = before;
+        return out;
+      },
+
+      updateMonth() {
+        const m = this.collectMonth();
+        const s = m.summary;
+        const sign = (x) => (x < 0 ? '−' : '+');
+        $('month-summary').innerHTML = `Ce mois-ci : <strong>${sign(s.delta)}${money(Math.abs(s.delta))}</strong>, dont ${money(s.paid)} versés
+          et <span class="${s.gains < 0 ? 'neg' : 'pos'}">${sign(s.gains)}${money(Math.abs(s.gains))}</span> de gains/pertes`;
+        setMsg($('month-msg'), m.error || '');
+        return m;
+      },
+
+      async saveMonth(form) {
+        const m = this.updateMonth();
+        if (m.error) return;
+        await withBusy(form, async () => {
+          try {
+            // 1. Positions : investi (versement compté une fois), valeur Trade Republic, quantité
+            const refs = {};
+            for (const { h } of m.holdings) if (h.track_index && !(h.track_index in refs)) refs[h.track_index] = await indexReference(h.track_index);
+            await Promise.all(m.holdings.map(({ id, h, res }) => {
+              const row = { invested: res.invested, entry_mode: 'tr' };
+              if (h.price_mode === 'auto' || priceMode(h) === 'auto') {
+                if (res.quantity) { row.quantity = res.quantity; row.pru = Math.round(res.invested / res.quantity * 1e6) / 1e6; }
+              } else {
+                Object.assign(row, { manual_value: res.value, manual_value_date: isoDate() });
+                if (h.track_index) {
+                  const ref = refs[h.track_index];
+                  Object.assign(row, { index_ref_eur: ref ? ref.eur : null, index_ref_at: ref ? new Date(ref.at).toISOString() : null });
+                }
+              }
+              return db.update('ep_holdings', id, row);
+            }));
+            // 2. Livrets / comptes : nouveau solde
+            await Promise.all(m.accounts.map(({ id, balance }) => db.update('ep_accounts', id, { balance })));
+            // 3. Mois validé (l'état d'avant est conservé pour ne jamais doubler les versements)
+            const inputs = Object.fromEntries(m.holdings.map(({ id, res }) => [id, { contribution: res.contribution, quantity: res.quantity ?? null }]));
+            const record = { details: { ...m.before, inputs }, summary: m.summary };
+            if (this.monthClose) await db.update('ep_month_closes', this.monthClose.id, { ...record, updated_at: new Date().toISOString() });
+            else await db.insert('ep_month_closes', { month: isoMonth(monthStart()), ...record });
+          } catch (err) { return setMsg($('month-msg'), frError(err)); }
+          $('month-dialog').close();
+          // 4. Relevé du mois avec les nouvelles valeurs
+          await this.mount(this.root);
+          await this.doSnapshot(null);
+          const s = m.summary, sign = (x) => (x < 0 ? '−' : '+');
+          setMsg($('savings-msg'), `Mois validé. Ce mois-ci : ${sign(s.delta)}${money(Math.abs(s.delta))}, dont ${money(s.paid)} versés et ${sign(s.gains)}${money(Math.abs(s.gains))} de gains/pertes.`, 'ok');
+        });
+      },
+
       // « Relever les soldes » : propose d'abord de mettre à jour les valeurs saisies à la main.
       takeSnapshot(btn) {
         const manual = Object.values(this.vals).flatMap((v) => v.holdings).filter((h) => priceMode(h) === 'saisie');
@@ -3047,6 +3314,20 @@
     $('holding-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveHolding(e.target); });
     $('hold-cancel').addEventListener('click', () => $('holding-dialog').close());
     $('values-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveValuesAndSnapshot(e.target); });
+    $('month-form').addEventListener('submit', (e) => { e.preventDefault(); Savings.saveMonth(e.target); });
+    $('month-cancel').addEventListener('click', () => $('month-dialog').close());
+    $('month-list').addEventListener('input', () => Savings.updateMonth());
+    $('month-list').addEventListener('click', (e) => {
+      const t = e.target.closest('[data-m-toggle]');
+      if (!t) return;
+      // « saisir le gain € à la place » : l'investi sera recalé sur Trade Republic (valeur − gain)
+      const row = t.closest('[data-month-holding]');
+      const box = row.querySelector('[data-m-gainbox]');
+      box.hidden = !box.hidden;
+      row.querySelector('[data-m=contribution]').disabled = !box.hidden;
+      t.textContent = box.hidden ? 'saisir le gain € à la place' : 'utiliser le versement du mois à la place';
+      Savings.updateMonth();
+    });
     $('values-skip').addEventListener('click', () => { $('values-dialog').close(); Savings.doSnapshot(null); });
     $('values-cancel').addEventListener('click', () => $('values-dialog').close());
     $('hold-delete').addEventListener('click', () => Savings.removeHolding());
@@ -4375,12 +4656,14 @@
         const token = ++this.loadToken;
         try {
           const me = state.user.id;
-          const [accountsAll, perso, commun, goalsAll] = await Promise.all([
+          const [accountsAll, perso, commun, goalsAll, closes] = await Promise.all([
             db.list('ep_accounts', { space: 'tout' }),
             loadMonthSummary('perso', monthStart()),
             loadMonthSummary('commun', monthStart()),
             db.list('ep_goals', { space: 'tout' }),
+            db.list('ep_month_closes', { space: state.space, filters: { month: isoMonth(monthStart()) } }),
           ]);
+          this.monthClose = closes[0] || null;
           // Mon perso + le commun uniquement. La RLS bloque déjà le perso de l'autre ; on filtre aussi ici par prudence.
           const mineOrCommon = (r) => r.scope === 'commun' || r.user_id === me;
           // Valeur réelle du jour pour les comptes à positions
@@ -4399,6 +4682,7 @@
 
       bind(root) {
         root.addEventListener('click', (e) => {
+          if (e.target.closest('[data-action=open-month]')) return Savings.openMonth();
           const el = e.target.closest('[data-go]');
           if (!el) return;
           const [space, tab] = el.dataset.go.split(':');
@@ -4435,7 +4719,7 @@
 
         // Un bloc : comptes (badge Privé / Commun), projection, mois en cours
         const block = (sp, title, badge, list, total, m) => {
-          const proj = projectSavings(projectionInputs(list, vals), 240);
+          const proj = projectSavings(projectionInputs(list, vals), 30 * 12);
           const r = m.result;
           const ratio = r.planned > 0 ? r.real / r.planned : (r.real > 0 ? Infinity : 0);
           const level = ratio > 1 ? 'over' : ratio >= 0.9 ? 'near' : 'ok';
@@ -4485,6 +4769,7 @@
             <span>${money(p.monthlyNeeded)}/mois</span></div>`).join('');
 
         this.root.innerHTML = `
+          ${monthCtaHTML(this.monthClose)}
           ${reminders ? `<ul class="alerts" style="margin-top:16px">${reminders}</ul>` : ''}
           <div class="kpis">
             <div class="kpi"><div class="kpi-label">Moi + ma part du commun</div>
@@ -4539,6 +4824,24 @@
         if (!data.length) return setMsg(msg, 'Modification refusée.');
         await refresh();
         setMsg(msg, 'Part enregistrée.', 'ok');
+      });
+    });
+
+    // Inflation (ep_members.inflation_rate, 2 % par défaut)
+    const inflationRate = () => (state.member && state.member.inflation_rate !== undefined && state.member.inflation_rate !== null
+      ? Number(state.member.inflation_rate) : 2);
+    $('form-inflation').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const msg = $('inflation-msg');
+      const value = parseAmount($('set-inflation').value);
+      if (value === null || value < -5 || value > 20) return setMsg(msg, 'Indique un taux entre -5 et 20 % (ex. 2).');
+      withBusy(e.target, async () => {
+        const { data, error } = await sb.from('ep_members')
+          .update({ inflation_rate: value }).eq('user_id', state.user.id).select();
+        if (error) return setMsg(msg, frError(error));
+        if (!data.length) return setMsg(msg, 'Modification refusée.');
+        await refresh();
+        setMsg(msg, 'Inflation enregistrée.', 'ok');
       });
     });
 
