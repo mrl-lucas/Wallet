@@ -434,4 +434,5 @@ grant execute on function public.ep_join_household(text, text)   to authenticate
 --         puis supabase/migration_commun_index.sql (dépenses avancées dans le Commun, remboursements, suivi d'indice).
 --         puis supabase/migration_holdings_v3.sql (copier Trade Republic : quantité facultative, investi = valeur − gain).
 --         puis supabase/migration_mois.sql (« Mettre à jour mon mois » + taux d'inflation).
+--         puis supabase/migration_categories.sql (catégories personnalisées), et test_rls_categories.sql pour la vérifier.
 -- ---------------------------------------------------------------------

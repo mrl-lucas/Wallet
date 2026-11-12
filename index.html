@@ -242,6 +242,7 @@
     .card-head h2 { margin: 0; }
     .btn-small { min-height: 36px; padding: 6px 12px; font-size: .9rem; background: var(--space-soft); color: var(--space); }
     .btn-danger { background: transparent; color: var(--danger); border-color: var(--border); }
+    .btn-danger-fill { background: var(--danger); color: var(--surface); }
     .w100 { width: 100%; }
     .acc-list { list-style: none; padding: 0; margin: 8px 0 0; }
     .acc-list li + li { border-top: 1px solid var(--border); }
@@ -395,6 +396,16 @@
     .month-calc { display: block; font-size: .84rem; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
     .month-cta { margin-top: 16px; }
 
+    /* ---------- Catégories ---------- */
+    .cat-item { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 6px 8px; padding: 10px 0; border-top: 1px solid var(--border); }
+    .cat-item:first-child { border-top: 0; }
+    .cat-item input, .cat-item select { padding: 9px 8px; font-size: .9rem; }
+    .cat-actions { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .cat-actions button { min-height: 36px; padding: 6px 10px; font-size: .84rem; }
+    .cat-item.is-archived { opacity: .6; }
+    #ask-options label.check { display: flex; margin: 8px 0; font-size: .95rem; color: var(--text); }
+    .seg button[role="radio"] { white-space: normal; line-height: 1.2; }
+
     /* ---------- Vue d'ensemble ---------- */
     .group-head { display: flex; justify-content: space-between; margin: 14px 0 2px; font-size: .76rem; font-weight: 700;
                   text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -543,6 +554,60 @@
             <button type="button" class="btn-ghost" id="acc-cancel">Annuler</button>
             <button type="button" class="btn-danger" id="acc-delete">Supprimer</button>
           </div>
+        </form>
+      </dialog>
+
+      <!-- Fenêtre de choix de l'app (remplace confirm() : titre, texte, options éventuelles) -->
+      <dialog id="ask-dialog" class="sheet" aria-labelledby="ask-title">
+        <form id="ask-form" novalidate>
+          <h2 id="ask-title"></h2>
+          <p id="ask-text" class="muted"></p>
+          <div id="ask-options"></div>
+          <button class="btn-primary" type="submit" id="ask-ok">Valider</button>
+          <div class="row"><button type="button" class="btn-ghost" id="ask-cancel">Annuler</button></div>
+        </form>
+      </dialog>
+
+      <!-- Gérer les catégories (espace actif) -->
+      <dialog id="cat-dialog" class="sheet" aria-labelledby="cat-title">
+        <div>
+          <h2 id="cat-title">Gérer les catégories</h2>
+          <p class="muted" id="cat-intro"></p>
+          <div id="cat-list"></div>
+          <form id="cat-add" class="card" novalidate style="margin-top:12px">
+            <h2>Nouvelle catégorie</h2>
+            <div class="grid2">
+              <div><label for="cat-new-name">Nom</label><input id="cat-new-name" maxlength="40" placeholder="ex. Cadeaux"></div>
+              <div><label for="cat-new-group">Groupe</label><select id="cat-new-group" data-group-select></select></div>
+            </div>
+            <button class="btn-primary" type="submit">Ajouter la catégorie</button>
+          </form>
+          <p id="cat-msg" class="msg" role="status"></p>
+          <div class="row"><button type="button" class="btn-ghost" id="cat-close">Fermer</button></div>
+        </div>
+      </dialog>
+
+      <!-- Ajouter un budget (Dépenses) -->
+      <dialog id="budget-dialog" class="sheet" aria-labelledby="budget-title">
+        <form id="budget-form" novalidate>
+          <h2 id="budget-title">Ajouter un budget</h2>
+          <label for="budget-cat">Catégorie</label>
+          <select id="budget-cat"></select>
+          <div id="budget-new-box" class="grid2" hidden>
+            <div><label for="budget-new-name">Nom de la catégorie</label><input id="budget-new-name" maxlength="40" placeholder="ex. Cadeaux"></div>
+            <div><label for="budget-new-group">Groupe</label><select id="budget-new-group" data-group-select></select></div>
+          </div>
+          <label for="budget-amount">Montant (€ / mois)</label>
+          <input id="budget-amount" inputmode="decimal" autocomplete="off" placeholder="ex. 80">
+          <label>S’applique à</label>
+          <div class="seg" role="radiogroup" aria-label="Portée du budget">
+            <button type="button" role="radio" data-budget-scope="mois" aria-checked="true">Ce mois-ci seulement</button>
+            <button type="button" role="radio" data-budget-scope="tous" aria-checked="false">Tous les mois</button>
+          </div>
+          <p class="hint" id="budget-scope-hint"></p>
+          <p id="budget-msg" class="msg" role="status"></p>
+          <button class="btn-primary" type="submit">Enregistrer le budget</button>
+          <div class="row"><button type="button" class="btn-ghost" id="budget-cancel">Annuler</button></div>
         </form>
       </dialog>
 
@@ -1199,18 +1264,35 @@
       virement_commun: { label: 'Virement compte commun',  group: 'besoins', auto: true, persoOnly: true, short: 'Virement commun' },
       pret:            { label: 'Prêt étudiant',           group: 'besoins', auto: true, persoOnly: true },
     };
-    const catInfo = (c) => CATEGORIES[c] || CATEGORIES.autre;
-    const catOrder = (c) => { const i = Object.keys(CATEGORIES).indexOf(c); return i < 0 ? 999 : i; };
+    // Catégories personnalisées ou renommées (table ep_categories), séparées par espace.
+    // { code: { label, group, order, archived, custom, id } } — rempli par loadPlan().
+    const CAT_REGISTRY = { perso: {}, commun: {} };
+    const AUTO_CATEGORIES = Object.keys(CATEGORIES).filter((c) => CATEGORIES[c].auto);
+    const DEFAULT_ORDER = (c) => { const i = Object.keys(CATEGORIES).indexOf(c); return i < 0 ? 999 : i * 10; };
+    // Lecture d'une catégorie pour un espace : personnalisation > catégorie par défaut > « Autre »
+    function catLookup(space) {
+      const reg = CAT_REGISTRY[space] || {};
+      return (c) => {
+        const base = CATEGORIES[c] || (reg[c] ? {} : CATEGORIES.autre);
+        const custom = reg[c];
+        return custom && !base.auto
+          ? { ...base, label: custom.label, short: custom.label, group: custom.group, order: custom.order, archived: custom.archived, custom: !CATEGORIES[c] }
+          : { ...base, order: DEFAULT_ORDER(c) };
+      };
+    }
+    const catInfo = (c) => catLookup(typeof state !== 'undefined' && state ? state.space : 'perso')(c);
+    const catOrder = (c, cat = catInfo) => { const o = cat(c).order; return o === undefined ? 999 : o; };
 
     // Budget par défaut d'un espace : lignes libres + lignes automatiques.
     // income : revenu mensuel ; lines : [{ category, amount }] ; autos : { epargne, virement_commun, pret }
-    function computeBudget({ income, lines, autos }) {
+    // cat : lecture des catégories de l'espace concerné (catégories personnalisées comprises)
+    function computeBudget({ income, lines, autos, cat = catInfo }) {
       const byCat = {};
       for (const l of lines) byCat[l.category] = (byCat[l.category] || 0) + (Number(l.amount) || 0);
       for (const [cat, v] of Object.entries(autos)) byCat[cat] = (byCat[cat] || 0) + (Number(v) || 0);
       const groups = { besoins: 0, envies: 0, epargne: 0 };
       let total = 0;
-      for (const [cat, v] of Object.entries(byCat)) { groups[catInfo(cat).group] += v; total += v; }
+      for (const [c, v] of Object.entries(byCat)) { groups[cat(c).group || 'envies'] += v; total += v; }
       income = Number(income) || 0;
       return {
         income, byCat, groups, total,
@@ -1222,7 +1304,8 @@
 
     // Réel vs prévu d'un mois. overrides : [{ category, planned_amount }] ; expenses : [{ category, amount }]
     // Une ligne automatique compte comme réalisée tant qu'aucune dépense réelle n'est saisie dans sa catégorie.
-    function computeMonth({ plannedByCat, overrides = [], expenses = [] }) {
+    // Une catégorie avec un budget et 0 € dépensé reste affichée (0 / budget) ; budget retiré et 0 € dépensé : masquée.
+    function computeMonth({ plannedByCat, overrides = [], expenses = [], cat = catInfo }) {
       const ov = new Map(overrides.map((o) => [o.category, Number(o.planned_amount) || 0]));
       const realBy = {}, countBy = {};
       for (const e of expenses) {
@@ -1231,15 +1314,15 @@
       }
       const cats = new Set([
         ...Object.keys(plannedByCat).filter((c) => plannedByCat[c] > 0), ...ov.keys(), ...Object.keys(realBy)]);
-      const rows = [...cats].sort((a, b) => catOrder(a) - catOrder(b)).map((category) => {
+      const rows = [...cats].sort((a, b) => catOrder(a, cat) - catOrder(b, cat)).map((category) => {
         const defaultPlanned = plannedByCat[category] || 0;
         const planned = ov.has(category) ? ov.get(category) : defaultPlanned;
-        const autoDone = !!catInfo(category).auto && CATEGORIES[category] !== undefined && !countBy[category];
+        const autoDone = !!cat(category).auto && CATEGORIES[category] !== undefined && !countBy[category];
         const real = autoDone ? planned : (realBy[category] || 0);
         const ratio = planned > 0 ? real / planned : (real > 0 ? Infinity : 0);
         const level = autoDone ? 'done' : ratio > 1 ? 'over' : ratio >= 0.9 ? 'near' : 'ok';
         return { category, planned, defaultPlanned, overridden: ov.has(category), real, autoDone, ratio, level };
-      });
+      }).filter((r) => r.planned > 0 || r.real > 0);
       const planned = rows.reduce((s, r) => s + r.planned, 0);
       const real = rows.reduce((s, r) => s + r.real, 0);
       return { rows, planned, real, rest: planned - real };
@@ -1589,7 +1672,7 @@
     // Tables « à espace » : chaque ligne porte household_id + scope + user_id.
     // db.insert les remplit tout seul selon l'espace actif ; la RLS fait le reste côté base.
     const SCOPED_TABLES = ['ep_accounts', 'ep_budget_lines', 'ep_month_overrides',
-                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals', 'ep_holdings', 'ep_settlements', 'ep_month_closes'];
+                           'ep_expenses', 'ep_incomes', 'ep_loans', 'ep_goals', 'ep_holdings', 'ep_settlements', 'ep_month_closes', 'ep_categories'];
     const db = {
       isScoped: (table) => SCOPED_TABLES.includes(table),
 
@@ -3354,7 +3437,7 @@
     // month : mois affiché (la ligne « Prêt étudiant » vaut ce qui est réellement dû ce mois-là).
     async function loadPlan(space = state.space, month = monthStart()) {
       const perso = space === 'perso';
-      const [lines, incomes, accounts, myContribution, loans, goals, holdings] = await Promise.all([
+      const [lines, incomes, accounts, myContribution, loans, goals, holdings, categories] = await Promise.all([
         db.list('ep_budget_lines', { space }),
         db.list('ep_incomes', { space }),
         db.list('ep_accounts', { space }),
@@ -3363,7 +3446,10 @@
         perso ? db.list('ep_loans', { space }) : [],
         db.list('ep_goals', { space }),
         db.list('ep_holdings', { space }),
+        db.list('ep_categories', { space, order: 'sort_order' }),
       ]);
+      fillCategories(space, categories);
+      const cat = catLookup(space);
       const monthAbs = absMonth(isoMonth(month));
       // Mon espace : salaire + aides familiales mensuelles (les aides ponctuelles comptent dans leur mois, onglet Dépenses)
       const incomeParts = perso ? monthIncome(incomes, null) : null;
@@ -3381,7 +3467,7 @@
       // Part des prêts payée par des tiers ce mois-là (encart « Pris en charge par des tiers »)
       const loanThirds = loans.map((l) => ({ paid_by: 'tiers', payer_name: l.payer_name, amount: loanSplit(l, loanDue(l, monthAbs)).third }))
         .filter((x) => x.amount > 0);
-      lines.sort((a, b) => catOrder(a.category) - catOrder(b.category) || a.label.localeCompare(b.label, 'fr'));
+      lines.sort((a, b) => catOrder(a.category, cat) - catOrder(b.category, cat) || a.label.localeCompare(b.label, 'fr'));
       // Épargne mensuelle nécessaire pour tenir les objectifs (info, non comptée dans le budget)
       const nowAbs = absMonth(isoMonth(monthStart()));
       const goalsMonthly = sumBy(goals, (g) => {
@@ -3390,8 +3476,34 @@
       });
       // Lignes payées par un tiers (ou avancées puis remboursées) : visibles mais hors budget
       const countedLines = lines.filter(countsForMe);
-      return { space, lines, countedLines, incomes, incomeParts, accounts, autos, loans, loanThirds, goals, goalsMonthly,
-               budget: computeBudget({ income, lines: countedLines, autos }) };
+      return { space, cat, lines, countedLines, incomes, incomeParts, accounts, autos, loans, loanThirds, goals, goalsMonthly,
+               budget: computeBudget({ income, lines: countedLines, autos, cat }) };
+    }
+
+    // ---------- Catégories (ep_categories) ----------
+    function fillCategories(space, rows) {
+      CAT_REGISTRY[space] = Object.fromEntries(rows.map((r) => [r.code,
+        { id: r.id, label: r.name, group: r.category_group, order: r.sort_order, archived: r.archived }]));
+    }
+    // Catégories libres d'un espace (par défaut + personnalisées), dans l'ordre ; archivées exclues sauf demande.
+    function categoryList(space, { archived = false } = {}) {
+      const cat = catLookup(space);
+      const codes = [...FREE_CATEGORIES, ...Object.keys(CAT_REGISTRY[space] || {}).filter((c) => !CATEGORIES[c])];
+      return codes.map((code) => ({ code, ...cat(code) }))
+        .filter((c) => archived || !c.archived)
+        .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'fr'));
+    }
+    const GROUP_LABELS = { besoins: 'Besoins', envies: 'Envies', epargne: 'Épargne' };   // barre 50 / 30 / 20
+    const groupOptions = (sel) => Object.entries(GROUP_LABELS).map(([g, l]) => `<option value="${g}" ${g === sel ? 'selected' : ''}>${l}</option>`).join('');
+    const newCategoryCode = () => 'c_' + (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '').slice(0, 8)
+      : Math.random().toString(16).slice(2, 10));
+    // Crée une catégorie (nom, groupe) dans l'espace actif ; renvoie son code.
+    async function createCategory(name, group) {
+      const list = categoryList(state.space, { archived: true });
+      const code = newCategoryCode();
+      await db.insert('ep_categories', { code, name: name.trim().slice(0, 40), category_group: group,
+        sort_order: (list.length ? Math.max(...list.map((c) => c.order)) : 0) + 10 });
+      return code;
     }
 
     // Après une modification qui touche plusieurs onglets (budget, revenus, comptes) : on recharge tout.
@@ -3405,6 +3517,29 @@
       virement_commun: () => 'Ta contribution saisie dans le Commun.',
       pret: () => 'Montant dû ce mois-ci d’après l’onglet Prêt (0 pendant un différé total).',
     };
+
+    // ================== Fenêtre de choix de l'app (à la place de confirm()) ==================
+    // ask({ title, text, options: [{ value, label }], ok }) → Promise : valeur choisie, true (sans options) ou null (annulé).
+    function ask({ title, text = '', options = [], ok = 'Valider', danger = false }) {
+      return new Promise((resolve) => {
+        const dlg = $('ask-dialog');
+        $('ask-title').textContent = title;
+        $('ask-text').textContent = text;
+        $('ask-options').innerHTML = options.map((o, i) => `<label class="check"><input type="radio" name="ask-opt" value="${esc(o.value)}" ${i === 0 ? 'checked' : ''}> ${esc(o.label)}</label>`).join('');
+        $('ask-ok').textContent = ok;
+        $('ask-ok').className = danger ? 'btn-primary btn-danger-fill' : 'btn-primary';
+        let done = false;
+        const finish = (v) => { if (done) return; done = true; dlg.close(); resolve(v); };
+        $('ask-form').onsubmit = (e) => {
+          e.preventDefault();
+          const sel = $('ask-options').querySelector('input:checked');
+          finish(options.length ? (sel ? sel.value : null) : true);
+        };
+        $('ask-cancel').onclick = () => finish(null);
+        dlg.onclose = () => finish(null);
+        dlg.showModal();
+      });
+    }
 
     // ================== « Payé par » (lignes de budget et dépenses) ==================
     // Badges : « Payé par Parents », « À rembourser », « Remboursé ».
@@ -3459,6 +3594,7 @@
           if (el.dataset.action === 'add-line') this.openLine(null);
           if (el.dataset.action === 'edit-line') this.openLine(this.plan.lines.find((l) => l.id === el.dataset.id));
           if (el.dataset.action === 'add-aid') this.openAid(null);
+          if (el.dataset.action === 'manage-cats') CategoryManager.open();
           if (el.dataset.action === 'edit-aid') this.openAid(this.plan.incomes.find((i) => i.id === el.dataset.id));
         });
         root.addEventListener('submit', (e) => {
@@ -3562,11 +3698,12 @@
 
           <div class="card">
             <div class="card-head"><h2>Budget du mois type</h2>
-              <button type="button" class="btn-small" data-action="add-line">+ Ligne</button></div>
+              <span><button type="button" class="btn-small" data-action="manage-cats">Catégories</button>
+              <button type="button" class="btn-small" data-action="add-line">+ Ligne</button></span></div>
             <ul class="line-list">
               ${lines.map((l) => `
                 <li><button type="button" class="line-row ${countsForMe(l) ? '' : 'is-off'}" data-action="edit-line" data-id="${l.id}">
-                  <span><span class="acc-name">${esc(l.label)}</span><span class="acc-meta">${catInfo(l.category).label}</span>
+                  <span><span class="acc-name">${esc(l.label)}</span><span class="acc-meta">${esc(catInfo(l.category).label)}</span>
                     ${paidByTags(l)}</span>
                   <span class="line-amount">${money(l.amount)}</span>
                 </button></li>`).join('')}
@@ -3714,7 +3851,11 @@
         this.editing = line || null;
         $('line-title').textContent = line ? 'Modifier la ligne' : 'Nouvelle ligne de budget';
         $('line-label').value = line ? line.label : '';
-        $('line-category').value = line && FREE_CATEGORIES.includes(line.category) ? line.category : 'logement';
+        // Catégories de l'espace (personnalisées comprises) ; une catégorie archivée reste visible si la ligne l'utilise
+        const cats = categoryList(state.space);
+        if (line && !cats.some((c) => c.code === line.category) && !CATEGORIES[line.category]?.auto) cats.push({ code: line.category, ...catInfo(line.category) });
+        $('line-category').innerHTML = cats.map((c) => `<option value="${esc(c.code)}">${esc(c.label)}${c.archived ? ' (archivée)' : ''}</option>`).join('');
+        $('line-category').value = line ? line.category : (cats[0] ? cats[0].code : 'autre');
         $('line-amount').value = line ? numToInput(line.amount) : '';
         $('line-paidby').value = line ? line.paid_by || 'moi' : 'moi';
         $('line-payer').value = line ? line.payer_name || '' : '';
@@ -3752,8 +3893,18 @@
       },
     };
 
-    $('line-category').innerHTML = FREE_CATEGORIES.map((c) => `<option value="${c}">${CATEGORIES[c].label}</option>`).join('');
     $('line-form').addEventListener('submit', (e) => { e.preventDefault(); BudgetTab.saveLine(e.target); });
+    function syncBudgetDialog() {
+      $('budget-new-box').hidden = $('budget-cat').value !== '__new';
+      document.querySelectorAll('[data-budget-scope]').forEach((b) => b.setAttribute('aria-checked', b.dataset.budgetScope === ExpensesTab.budgetScope));
+      $('budget-scope-hint').textContent = ExpensesTab.budgetScope === 'mois'
+        ? 'Ajustement du mois affiché uniquement : le budget par défaut ne change pas.'
+        : 'Budget par défaut : il s’applique à tous les mois (sauf mois ajustés).';
+    }
+    $('budget-cat').addEventListener('change', syncBudgetDialog);
+    document.querySelectorAll('[data-budget-scope]').forEach((b) => b.addEventListener('click', () => { ExpensesTab.budgetScope = b.dataset.budgetScope; syncBudgetDialog(); }));
+    $('budget-form').addEventListener('submit', (e) => { e.preventDefault(); ExpensesTab.saveBudget(e.target); });
+    $('budget-cancel').addEventListener('click', () => $('budget-dialog').close());
     $('line-cancel').addEventListener('click', () => $('line-dialog').close());
     $('line-delete').addEventListener('click', () => BudgetTab.removeLine());
     $('line-paidby').addEventListener('change', () => syncPaidBy('line'));
@@ -3768,6 +3919,125 @@
       BudgetTab.drawChart();
     });
 
+    // ================== « Gérer les catégories » (Budget) ==================
+    // Ajouter, renommer, changer de groupe, réordonner, archiver. Une catégorie utilisée ne se supprime pas :
+    // elle s'archive (l'historique reste lisible). Les catégories automatiques ne sont pas modifiables.
+    const CategoryManager = {
+      dirty: false,
+
+      async open() {
+        this.dirty = false;
+        const partner = (state.members.find((m) => m.user_id !== state.user.id) || {}).first_name;
+        $('cat-intro').textContent = (state.space === 'perso'
+          ? 'Tes catégories perso : visibles par toi seul·e.'
+          : `Catégories du Commun, partagées avec ${partner || 'le foyer'}.`)
+          + ' Groupe = place dans la règle 50 / 30 / 20 (besoins 50 %, envies 30 %, épargne 20 %).';
+        $('cat-new-name').value = '';
+        $('cat-new-group').innerHTML = groupOptions('envies');
+        setMsg($('cat-msg'), '');
+        await this.reload();
+        $('cat-dialog').showModal();
+      },
+
+      async reload() {
+        fillCategories(state.space, await db.list('ep_categories', { order: 'sort_order' }));
+        this.render();
+      },
+
+      render() {
+        const list = categoryList(state.space, { archived: true });
+        $('cat-list').innerHTML = list.map((c, i) => `
+          <div class="cat-item ${c.archived ? 'is-archived' : ''}" data-code="${esc(c.code)}">
+            <input data-f="name" maxlength="40" value="${esc(c.label)}" aria-label="Nom de la catégorie">
+            <select data-f="group" aria-label="Groupe">${groupOptions(c.group)}</select>
+            <div class="cat-actions">
+              <button type="button" class="btn-ghost" data-act="up" ${i === 0 ? 'disabled' : ''} aria-label="Monter">↑</button>
+              <button type="button" class="btn-ghost" data-act="down" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Descendre">↓</button>
+              <button type="button" class="btn-ghost" data-act="${c.archived ? 'unarchive' : 'archive'}">${c.archived ? 'Réactiver' : 'Archiver'}</button>
+              ${c.custom ? '<button type="button" class="btn-danger" data-act="delete">Supprimer</button>' : ''}
+              <span class="muted small">${c.custom ? 'personnalisée' : 'par défaut'}${c.archived ? ' · archivée' : ''}</span>
+            </div>
+          </div>`).join('')
+          + `<p class="hint">Automatiques (non modifiables) : ${AUTO_CATEGORIES.filter((c) => state.space === 'perso' || !CATEGORIES[c].persoOnly)
+              .map((c) => CATEGORIES[c].label).join(', ')}.</p>`;
+      },
+
+      // Enregistre une personnalisation (crée la ligne pour une catégorie par défaut si besoin)
+      async save(code, patch) {
+        const reg = (CAT_REGISTRY[state.space] || {})[code];
+        const base = catLookup(state.space)(code);
+        const row = { name: (patch.name ?? base.label).slice(0, 40), category_group: patch.group ?? base.group,
+                      sort_order: patch.order ?? base.order, archived: patch.archived ?? !!base.archived };
+        if (reg && reg.id) await db.update('ep_categories', reg.id, row);
+        else await db.insert('ep_categories', { code, ...row });
+        this.dirty = true;
+      },
+
+      async act(code, action, item) {
+        const msg = $('cat-msg');
+        setMsg(msg, '');
+        try {
+          if (action === 'name') {
+            const name = item.querySelector('[data-f=name]').value.trim();
+            if (!name) return setMsg(msg, 'Le nom ne peut pas être vide.');
+            await this.save(code, { name });
+          }
+          if (action === 'group') await this.save(code, { group: item.querySelector('[data-f=group]').value });
+          if (action === 'archive' || action === 'unarchive') await this.save(code, { archived: action === 'archive' });
+          if (action === 'up' || action === 'down') {
+            const list = categoryList(state.space, { archived: true });
+            const i = list.findIndex((c) => c.code === code), j = action === 'up' ? i - 1 : i + 1;
+            if (j < 0 || j >= list.length) return;
+            [list[i], list[j]] = [list[j], list[i]];
+            // Nouvel ordre : 10, 20, 30… (seules les catégories dont l'ordre change sont enregistrées)
+            for (const [k, c] of list.entries()) if (c.order !== (k + 1) * 10) await this.save(c.code, { order: (k + 1) * 10 });
+          }
+          if (action === 'delete') {
+            const [lines, expenses, overrides] = await Promise.all([
+              db.list('ep_budget_lines', { filters: { category: code } }),
+              db.list('ep_expenses', { filters: { category: code } }),
+              db.list('ep_month_overrides', { filters: { category: code } }),
+            ]);
+            if (lines.length || expenses.length || overrides.length) {
+              return setMsg(msg, 'Catégorie utilisée (budget ou dépenses) : archive-la plutôt, l’historique restera lisible.');
+            }
+            if (!(await ask({ title: `Supprimer « ${catInfo(code).label} » ?`, text: 'Elle n’est utilisée nulle part.', ok: 'Supprimer', danger: true }))) return;
+            await db.remove('ep_categories', CAT_REGISTRY[state.space][code].id);
+            this.dirty = true;
+          }
+        } catch (err) { return setMsg(msg, frError(err)); }
+        await this.reload();
+      },
+
+      async add(form) {
+        const name = $('cat-new-name').value.trim();
+        if (!name) return setMsg($('cat-msg'), 'Donne un nom à la catégorie.');
+        await withBusy(form, async () => {
+          try { await createCategory(name, $('cat-new-group').value); }
+          catch (err) { return setMsg($('cat-msg'), frError(err)); }
+          this.dirty = true;
+          $('cat-new-name').value = '';
+          await this.reload();
+          setMsg($('cat-msg'), `Catégorie « ${name} » ajoutée.`, 'ok');
+        });
+      },
+
+      async close() {
+        $('cat-dialog').close();
+        if (this.dirty) await remountAll();
+      },
+    };
+    $('cat-list').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-act]');
+      if (b) CategoryManager.act(b.closest('[data-code]').dataset.code, b.dataset.act, b.closest('.cat-item'));
+    });
+    $('cat-list').addEventListener('change', (e) => {
+      const f = e.target.dataset.f;
+      if (f) CategoryManager.act(e.target.closest('[data-code]').dataset.code, f, e.target.closest('.cat-item'));
+    });
+    $('cat-add').addEventListener('submit', (e) => { e.preventDefault(); CategoryManager.add(e.target); });
+    $('cat-close').addEventListener('click', () => CategoryManager.close());
+
     // ================== Onglet Dépenses ==================
     const ExpensesTab = {
       root: null, month: monthStart(), plan: null, expenses: [], overrides: [], settlements: [], result: null,
@@ -3780,18 +4050,20 @@
         const token = ++this.loadToken;
         const from = isoMonth(this.month), to = isoMonth(addMonths(this.month, 1));
         try {
-          const [plan, expenses, overrides, settlements] = await Promise.all([
+          const [plan, expenses, overrides, settlements, prevOverrides] = await Promise.all([
             loadPlan(state.space, this.month),
             db.list('ep_expenses', { range: ['date', from, to], order: 'date', ascending: false }),
             db.list('ep_month_overrides', { filters: { month: from } }),
             state.space === 'commun' ? db.list('ep_settlements', { filters: { month: from } }) : [],
+            db.list('ep_month_overrides', { filters: { month: isoMonth(addMonths(this.month, -1)) } }),
           ]);
           if (token !== this.loadToken) return;
           this.settlements = settlements;
+          this.prevOverrides = prevOverrides;
           expenses.sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at).localeCompare(String(a.created_at)));
           Object.assign(this, { plan, expenses, overrides });
           // Seules mes dépenses comptent (pas celles payées par un tiers, ni les avances remboursées)
-          this.result = computeMonth({ plannedByCat: plan.budget.byCat, overrides, expenses: expenses.filter(countsForMe) });
+          this.result = computeMonth({ plannedByCat: plan.budget.byCat, overrides, expenses: expenses.filter(countsForMe), cat: plan.cat });
           this.render();
         } catch (err) {
           if (token === this.loadToken) root.innerHTML = `<p class="msg error">Erreur de chargement : ${esc(frError(err))}</p>`;
@@ -3809,6 +4081,9 @@
             return this.mount(root);
           }
           if (a === 'adjust') { this.adjusting = el.dataset.cat; return this.render(); }
+          if (a === 'add-budget') return this.openBudget();
+          if (a === 'remove-budget') return this.removeBudget(el.dataset.cat);
+          if (a === 'copy-prev') return this.copyPrevious();
           if (a === 'cancel-adjust') { this.adjusting = null; return this.render(); }
           if (a === 'reset-cat') return this.resetOverrides(this.overrides.filter((o) => o.category === el.dataset.cat));
           if (a === 'reset-all' && confirm(`Revenir au budget par défaut pour ${fmtMonth.format(this.month)} ?`)) {
@@ -3833,7 +4108,10 @@
         const r = this.result;
         const perso = state.space === 'perso';
         const isCurrent = isoMonth(this.month) === isoMonth(monthStart());
-        const cats = Object.keys(CATEGORIES).filter((c) => perso || !CATEGORIES[c].persoOnly);
+        // Catégories de l'espace (personnalisées comprises, archivées exclues) + catégories automatiques
+        const cats = [...categoryList(state.space).map((c) => c.code),
+                      ...AUTO_CATEGORIES.filter((c) => perso || !CATEGORIES[c].persoOnly)];
+        if (!cats.includes(this.lastCategory)) this.lastCategory = cats[0];
         const status = (row) => {
           const parts = [];
           if (row.autoDone) parts.push('Compté comme réalisé (automatique)');
@@ -3863,7 +4141,7 @@
               <div>
                 <label for="qa-category">Catégorie</label>
                 <select id="qa-category">${cats.map((c) =>
-                  `<option value="${c}" ${c === this.lastCategory ? 'selected' : ''}>${CATEGORIES[c].label}</option>`).join('')}</select>
+                  `<option value="${esc(c)}" ${c === this.lastCategory ? 'selected' : ''}>${esc(catInfo(c).label)}</option>`).join('')}</select>
               </div>
               <div>
                 <label for="qa-date">Date</label>
@@ -3905,11 +4183,12 @@
             <h2>Par catégorie</h2>
             ${r.rows.length ? r.rows.map((row) => `
               <div class="cat-row">
-                <div class="cat-top"><span class="cat-name">${catInfo(row.category).label}</span>
+                <div class="cat-top"><span class="cat-name">${esc(catInfo(row.category).label)}</span>
                   <span class="cat-figs"><strong>${money(row.real)}</strong> / ${money(row.planned)}</span></div>
                 <div class="bar ${row.level}"><span style="width:${Math.min(100, row.ratio === Infinity ? 100 : row.ratio * 100)}%"></span></div>
                 <div class="cat-sub"><span>${status(row)}</span>
-                  <button type="button" class="link-btn" data-action="adjust" data-cat="${row.category}">Ajuster</button></div>
+                  <span><button type="button" class="link-btn" data-action="adjust" data-cat="${esc(row.category)}">Ajuster</button>
+                  ${row.planned > 0 && !catInfo(row.category).auto ? ` · <button type="button" class="link-btn" data-action="remove-budget" data-cat="${esc(row.category)}">Retirer le budget</button>` : ''}</span></div>
                 ${this.adjusting === row.category ? `
                   <form class="adjust" data-adjust="${row.category}" novalidate>
                     <input name="planned" inputmode="decimal" autocomplete="off" value="${numToInput(Math.round(row.planned * 100) / 100)}" aria-label="Prévu ce mois (€)">
@@ -3919,8 +4198,11 @@
                   </form>` : ''}
               </div>`).join('')
               : '<p class="muted">Rien de prévu ni de dépensé ce mois-ci : commence par le budget, ou ajoute une dépense.</p>'}
-            ${this.overrides.length ? `<button type="button" class="btn-ghost w100" data-action="reset-all" style="margin-top:12px">
-              Revenir au budget par défaut (${this.overrides.length} ajustement${this.overrides.length > 1 ? 's' : ''})</button>` : ''}
+            <button type="button" class="btn-small w100" data-action="add-budget" style="margin-top:12px">+ Ajouter un budget</button>
+            ${this.overrides.length ? `<button type="button" class="btn-ghost w100" data-action="reset-all" style="margin-top:8px">
+              Revenir au budget par défaut (${this.overrides.length} ajustement${this.overrides.length > 1 ? 's' : ''})</button>`
+              : (this.prevOverrides || []).length ? `<button type="button" class="btn-ghost w100" data-action="copy-prev" style="margin-top:8px">
+              Copier le budget de ${fmtMonth.format(addMonths(this.month, -1))}</button>` : ''}
           </div>
 
           <div class="card">
@@ -3929,7 +4211,7 @@
               <li class="${countsForMe(e) ? '' : 'is-off'}">
                 <span class="exp-date">${e.date.slice(8, 10)}/${e.date.slice(5, 7)}</span>
                 <span class="exp-main"><span>${esc(e.label)}</span>
-                  <span class="acc-meta">${catInfo(e.category).label}${!perso && e.created_by ? ' · ' + esc(memberName(e.created_by)) : ''}</span>
+                  <span class="acc-meta">${esc(catInfo(e.category).label)}${!perso && e.created_by ? ' · ' + esc(memberName(e.created_by)) : ''}</span>
                   ${paidByTags(e)}
                   ${e.paid_by === 'avance' ? `<label class="check"><input type="checkbox" data-reimburse="${e.id}" ${e.reimbursed ? 'checked' : ''}> remboursement reçu</label>` : ''}</span>
                 <span class="line-amount">${money(e.amount)}</span>
@@ -3992,6 +4274,88 @@
             ${t.pending ? `<div class="kv strong"><span>En attente de remboursement</span><span>${money(t.pending)}</span></div>` : ''}
             <p class="hint">Non compté dans ton réel ni dans ton budget. Une dépense avancée compte tant qu’elle n’est pas remboursée.</p>
           </div>`;
+      },
+
+      // ---------- Fixer un budget sans passer par une dépense ----------
+      openBudget(code = null) {
+        const cats = categoryList(state.space);
+        $('budget-cat').innerHTML = cats.map((c) => `<option value="${esc(c.code)}">${esc(c.label)}</option>`).join('')
+          + '<option value="__new">+ Nouvelle catégorie…</option>';
+        $('budget-cat').value = code || (cats[0] ? cats[0].code : '__new');
+        $('budget-new-name').value = '';
+        $('budget-new-group').innerHTML = groupOptions('envies');
+        $('budget-amount').value = '';
+        this.budgetScope = 'mois';
+        syncBudgetDialog();
+        setMsg($('budget-msg'), '');
+        $('budget-dialog').showModal();
+      },
+
+      async saveBudget(form) {
+        const msg = $('budget-msg');
+        let code = $('budget-cat').value;
+        const amount = parseAmount($('budget-amount').value);
+        if (amount === null || amount <= 0) return setMsg(msg, 'Indique un montant (ex. 80).');
+        const name = $('budget-new-name').value.trim();
+        if (code === '__new' && !name) return setMsg(msg, 'Donne un nom à la nouvelle catégorie.');
+        await withBusy(form, async () => {
+          try {
+            if (code === '__new') {
+              code = await createCategory(name, $('budget-new-group').value);
+              fillCategories(state.space, await db.list('ep_categories', { order: 'sort_order' }));
+            }
+            if (this.budgetScope === 'mois') {
+              // Ce mois-ci seulement : ajustement du mois (ep_month_overrides)
+              const existing = this.overrides.find((o) => o.category === code);
+              if (existing) await db.update('ep_month_overrides', existing.id, { planned_amount: amount });
+              else await db.insert('ep_month_overrides', { month: isoMonth(this.month), category: code, planned_amount: amount });
+            } else {
+              // Tous les mois : budget par défaut (ep_budget_lines)
+              const lines = this.plan.lines.filter((l) => l.category === code);
+              if (lines.length > 1) return setMsg(msg, 'Cette catégorie a plusieurs lignes de budget : ajuste-les dans l’onglet Budget.');
+              if (lines.length === 1) await db.update('ep_budget_lines', lines[0].id, { amount });
+              else await db.insert('ep_budget_lines', { label: catLookup(state.space)(code).label, category: code, amount });
+            }
+          } catch (err) { return setMsg(msg, frError(err)); }
+          $('budget-dialog').close();
+          await remountAll();
+        });
+      },
+
+      async removeBudget(code) {
+        const label = catInfo(code).label;
+        const lines = this.plan.lines.filter((l) => l.category === code);
+        const choice = await ask({
+          title: `Retirer le budget « ${label} »`,
+          text: 'Les dépenses déjà saisies restent enregistrées.',
+          options: [{ value: 'mois', label: `Pour ${fmtMonth.format(this.month)} seulement` },
+                    ...(lines.length ? [{ value: 'tous', label: 'Tous les mois (supprime le budget par défaut)' }] : [])],
+          ok: 'Retirer', danger: true,
+        });
+        if (!choice) return;
+        try {
+          if (choice === 'mois') {
+            const existing = this.overrides.find((o) => o.category === code);
+            if (existing) await db.update('ep_month_overrides', existing.id, { planned_amount: 0 });
+            else await db.insert('ep_month_overrides', { month: isoMonth(this.month), category: code, planned_amount: 0 });
+          } else {
+            await Promise.all(lines.map((l) => db.remove('ep_budget_lines', l.id)));
+          }
+        } catch (err) { return ask({ title: 'Impossible de retirer le budget', text: frError(err), ok: 'OK' }); }
+        await remountAll();
+      },
+
+      // « Copier le budget du mois dernier » : reprend ses ajustements pour le mois affiché
+      async copyPrevious() {
+        const prev = fmtMonth.format(addMonths(this.month, -1));
+        const okCopy = await ask({ title: `Copier le budget de ${prev} ?`,
+          text: `${this.prevOverrides.length} ajustement(s) de ${prev} seront repris pour ${fmtMonth.format(this.month)}.`, ok: 'Copier' });
+        if (!okCopy) return;
+        try {
+          await Promise.all(this.prevOverrides.map((o) =>
+            db.insert('ep_month_overrides', { month: isoMonth(this.month), category: o.category, planned_amount: o.planned_amount })));
+        } catch (err) { return ask({ title: 'Copie impossible', text: frError(err), ok: 'OK' }); }
+        await this.mount(this.root);
       },
 
       // Commun : qui a avancé combien ce mois-ci, et qui doit combien à qui (parts égales).
@@ -4634,7 +4998,7 @@
         db.list('ep_month_overrides', { space, filters: { month: from } }),
       ]);
       return { plan, expenses,
-               result: computeMonth({ plannedByCat: plan.budget.byCat, overrides, expenses: expenses.filter(countsForMe) }) };
+               result: computeMonth({ plannedByCat: plan.budget.byCat, overrides, expenses: expenses.filter(countsForMe), cat: plan.cat }) };
     }
 
     // Prochaine mensualité à ma charge (à partir de ce mois-ci), ou null.
