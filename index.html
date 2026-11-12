@@ -406,6 +406,14 @@
     #ask-options label.check { display: flex; margin: 8px 0; font-size: .95rem; color: var(--text); }
     .seg button[role="radio"] { white-space: normal; line-height: 1.2; }
 
+    /* ---------- Bandeaux système (hors connexion, erreur) ---------- */
+    .sys-banner { position: sticky; top: 0; z-index: 50; margin: 0 -16px; padding: 10px 16px; font-size: .9rem; font-weight: 600;
+                  display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .sys-offline { background: var(--wool-soft); color: var(--text); border-bottom: 2px solid var(--wool); }
+    .sys-error { background: color-mix(in srgb, var(--danger) 15%, var(--surface)); color: var(--text); border-bottom: 2px solid var(--danger); }
+    .sys-actions { display: flex; gap: 6px; }
+    .sys-actions button { min-height: 34px; padding: 4px 10px; font-size: .84rem; background: var(--surface); border-color: var(--border); color: var(--text); }
+
     /* ---------- Vue d'ensemble ---------- */
     .group-head { display: flex; justify-content: space-between; margin: 14px 0 2px; font-size: .76rem; font-weight: 700;
                   text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -417,6 +425,14 @@
   </style>
 </head>
 <body>
+  <!-- 1.8 : bandeaux « hors connexion » et « erreur » (remplacent une page figée) -->
+  <div id="net-banner" class="sys-banner sys-offline" role="status" hidden>
+    Hors connexion : rien ne sera enregistré tant que la connexion n’est pas revenue.
+  </div>
+  <div id="err-banner" class="sys-banner sys-error" role="alert" hidden>
+    <span id="err-text"></span>
+    <span class="sys-actions"><button type="button" id="err-reload">Recharger</button><button type="button" id="err-close">Fermer</button></span>
+  </div>
   <header>
     <span class="brand">
       <span class="brand-mark" aria-hidden="true">
@@ -452,7 +468,7 @@
         <label for="auth-email">E-mail</label>
         <input id="auth-email" type="email" autocomplete="email" inputmode="email" required>
         <label for="auth-password">Mot de passe</label>
-        <input id="auth-password" type="password" autocomplete="current-password" minlength="8" required>
+        <input id="auth-password" type="password" autocomplete="current-password" required>
         <button id="auth-submit" class="btn-primary" type="submit">Se connecter</button>
         <button id="auth-forgot" class="link-btn" type="button" style="margin-top:8px">Mot de passe oublié ?</button>
         <p id="auth-msg" class="msg" role="status"></p>
@@ -466,9 +482,9 @@
       <p class="muted">Choisis un nouveau mot de passe pour <strong id="reset-email"></strong>.</p>
       <form id="form-reset" novalidate>
         <label for="reset-password">Nouveau mot de passe</label>
-        <input id="reset-password" type="password" autocomplete="new-password" minlength="8" required>
+        <input id="reset-password" type="password" autocomplete="new-password" minlength="10" required>
         <label for="reset-password2">Confirmer</label>
-        <input id="reset-password2" type="password" autocomplete="new-password" minlength="8" required>
+        <input id="reset-password2" type="password" autocomplete="new-password" minlength="10" required>
         <button class="btn-primary" type="submit">Enregistrer le mot de passe</button>
         <p id="reset-msg" class="msg" role="status"></p>
       </form>
@@ -484,7 +500,7 @@
       <form id="form-create" class="card" novalidate>
         <h2>Créer notre foyer</h2>
         <label for="create-name">Nom du foyer</label>
-        <input id="create-name" placeholder="ex. Lucas & Célia" maxlength="80" required>
+        <input id="create-name" placeholder="ex. Notre foyer" maxlength="80" required>
         <button class="btn-primary" type="submit">Créer notre foyer</button>
         <p id="create-msg" class="msg" role="status"></p>
       </form>
@@ -1002,7 +1018,10 @@
           <h2>Code d'invitation</h2>
           <p class="muted">Envoie ce code à ton/ta partenaire pour qu'il/elle rejoigne le foyer.</p>
           <div id="invite-code" class="code"></div>
+          <p id="invite-expiry" class="hint"></p>
           <button id="copy-code" type="button" class="btn-ghost" style="width:100%">Copier le code</button>
+          <button id="regen-code" type="button" class="btn-ghost" style="width:100%;margin-top:8px">Régénérer le code</button>
+          <p id="invite-msg" class="msg" role="status"></p>
         </div>
 
         <form id="form-share" class="card" novalidate>
@@ -1065,6 +1084,36 @@
     const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const $ = (id) => document.getElementById(id);
+
+    // ================== 1.8 : erreurs globales et état hors connexion ==================
+    // Toute erreur non prévue s'affiche dans un bandeau clair au lieu de laisser la page figée.
+    let lastErrorAt = 0;
+    function reportError(err) {
+      const raw = (err && (err.message || err.reason)) || String(err || '');
+      if (/ResizeObserver loop/i.test(raw)) return;                       // bruit sans conséquence
+      if (Date.now() - lastErrorAt < 3000 && !$('err-banner').hidden) return; // pas de rafale
+      lastErrorAt = Date.now();
+      const text = !navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(raw)
+        ? 'Connexion au serveur impossible : vérifie ta connexion, puis réessaie.'
+        : `Oups, une erreur est survenue (${frError(err)}). L’action n’a peut-être pas été enregistrée ; recharge la page si l’écran semble figé.`;
+      $('err-text').textContent = text;
+      $('err-banner').hidden = false;
+    }
+    window.addEventListener('error', (e) => reportError(e.error || e.message));
+    window.addEventListener('unhandledrejection', (e) => reportError(e.reason));
+    $('err-reload').addEventListener('click', () => location.reload());
+    $('err-close').addEventListener('click', () => { $('err-banner').hidden = true; });
+    function syncOnline() {
+      $('net-banner').hidden = navigator.onLine;
+    }
+    window.addEventListener('offline', syncOnline);
+    window.addEventListener('online', () => {
+      syncOnline();
+      $('err-banner').hidden = true;
+      // Connexion revenue : on recharge les données affichées
+      if (typeof state !== 'undefined' && state.user && state.household && typeof remountAll === 'function') remountAll();
+    });
+    syncOnline();
     const state = {
       user: null, member: null, household: null, members: [],
       space: 'perso',      // espace actif : 'perso' (Mon espace) ou 'commun'
@@ -1121,7 +1170,9 @@
       if (/Invalid login credentials/i.test(m)) return 'E-mail ou mot de passe incorrect.';
       if (/Email not confirmed/i.test(m))       return 'Confirme d\'abord ton e-mail (lien reçu par mail).';
       if (/already registered/i.test(m))        return 'Un compte existe déjà avec cet e-mail.';
-      if (/Password should be/i.test(m))        return 'Mot de passe trop court (8 caractères minimum).';
+      if (/Password should be/i.test(m))        return 'Mot de passe trop court (10 caractères minimum).';
+      if (/violates check constraint/i.test(m)) return 'Valeur hors limites (texte trop long, montant ou date improbable).';
+      if (/JWT expired|refresh token/i.test(m)) return 'Session expirée : reconnecte-toi.';
       if (/Signups not allowed/i.test(m))       return 'Les inscriptions sont fermées.';
       if (/rate limit/i.test(m))                return 'Trop de tentatives, réessaie dans quelques minutes.';
       if (/Failed to fetch/i.test(m))           return 'Pas de connexion au serveur.';
@@ -1753,6 +1804,9 @@
       $('auth-password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
       $('auth-submit').textContent = mode === 'signup' ? 'Créer mon compte' : 'Se connecter';
       $('auth-forgot').hidden = mode === 'signup';
+      // 10 caractères pour un nouveau mot de passe ; un ancien mot de passe plus court permet toujours de se connecter
+      if (mode === 'signup') $('auth-password').setAttribute('minlength', '10'); else $('auth-password').removeAttribute('minlength');
+      $('auth-password').placeholder = mode === 'signup' ? '10 caractères minimum' : '';
       setMsg($('auth-msg'), '');
     }
     $('tab-login').addEventListener('click', () => setAuthMode('login'));
@@ -1767,7 +1821,7 @@
 
       if (!email || !password) return setMsg(msg, 'Renseigne e-mail et mot de passe.');
       if (authMode === 'signup' && !first) return setMsg(msg, 'Renseigne ton prénom.');
-      if (authMode === 'signup' && password.length < 8) return setMsg(msg, 'Mot de passe : 8 caractères minimum.');
+      if (authMode === 'signup' && password.length < 10) return setMsg(msg, 'Mot de passe : 10 caractères minimum.');
 
       withBusy(e.target, async () => {
         setMsg(msg, '');
@@ -1809,7 +1863,7 @@
       e.preventDefault();
       const msg = $('reset-msg');
       const password = $('reset-password').value;
-      if (password.length < 8) return setMsg(msg, 'Mot de passe : 8 caractères minimum.');
+      if (password.length < 10) return setMsg(msg, 'Mot de passe : 10 caractères minimum.');
       if (password !== $('reset-password2').value) return setMsg(msg, 'Les deux mots de passe ne sont pas identiques.');
       withBusy(e.target, async () => {
         const { error } = await sb.auth.updateUser({ password });
@@ -1833,7 +1887,7 @@
       // La RLS ne renvoie que MA ligne de membre (et celle de mon/ma partenaire).
       const { data: me, error } = await sb
         .from('ep_members')
-        .select('household_id, first_name, slot, common_share, inflation_rate, ep_households(id, name, invite_code)')
+        .select('household_id, first_name, slot, common_share, inflation_rate, ep_households(id, name, invite_code, invite_expires_at)')
         .eq('user_id', state.user.id)
         .maybeSingle();
       if (error) throw error;
@@ -1875,9 +1929,16 @@
         return li;
       }));
 
+      // Code d'invitation : valable 7 jours ; régénérable tant que le foyer n'a pas 2 membres
       const code = state.household.invite_code;
-      $('invite-card').hidden = !code || state.members.length >= 2;
-      $('invite-code').textContent = code || '';
+      const expires = state.household.invite_expires_at ? new Date(state.household.invite_expires_at) : null;
+      const expired = !code || (expires && expires < new Date());
+      $('invite-card').hidden = state.members.length >= 2;
+      $('regen-code').hidden = state.members.length >= 2;
+      $('invite-code').textContent = expired ? '— expiré —' : code;
+      $('copy-code').hidden = expired;
+      $('invite-expiry').textContent = expired ? 'Code expiré : régénère-le pour en obtenir un nouveau (valable 7 jours).'
+        : expires ? `Valable jusqu’au ${expires.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} à ${expires.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` : '';
 
       // Réglages : valeurs actuelles (sans écraser une saisie en cours)
       if (document.activeElement !== $('set-firstname')) $('set-firstname').value = state.member.first_name;
@@ -1919,10 +1980,30 @@
       const code = $('join-code').value.trim().toUpperCase();
       if (code.length !== 8) return setMsg(msg, 'Le code fait 8 caractères.');
       withBusy(e.target, async () => {
-        const { error } = await sb.rpc('ep_join_household', { p_code: code, p_first_name: firstName() || null });
+        const { data, error } = await sb.rpc('ep_join_household', { p_code: code, p_first_name: firstName() || null });
         if (error) return setMsg(msg, frError(error));
+        const status = data && data.status;
+        const messages = {
+          invalid: `Code d’invitation invalide.${data && data.left >= 0 ? ` Encore ${data.left} essai${data.left > 1 ? 's' : ''} possible${data.left > 1 ? 's' : ''} dans l’heure.` : ''}`,
+          expired: 'Ce code a expiré (valable 7 jours) : demande à ton/ta partenaire de le régénérer dans Réglages.',
+          full: 'Ce foyer est déjà complet.',
+          too_many: 'Trop d’essais ratés : réessaie dans une heure.',
+          already_member: 'Tu fais déjà partie d’un foyer.',
+          not_signed_in: 'Session expirée : reconnecte-toi.',
+        };
+        if (status !== 'ok') return setMsg(msg, messages[status] || 'Impossible de rejoindre ce foyer.');
         await refresh();
       });
+    });
+
+    $('regen-code').addEventListener('click', async () => {
+      const msg = $('invite-msg');
+      if (!(await ask({ title: 'Régénérer le code d’invitation ?', text: 'L’ancien code ne marchera plus. Le nouveau sera valable 7 jours.', ok: 'Régénérer' }))) return;
+      const { data, error } = await sb.rpc('ep_regenerate_invite');
+      if (error) return setMsg(msg, frError(error));
+      if (!data || data.status !== 'ok') return setMsg(msg, data && data.status === 'full' ? 'Le foyer est déjà complet.' : 'Régénération impossible.');
+      await refresh();
+      setMsg($('invite-msg'), 'Nouveau code créé.', 'ok');
     });
 
     $('copy-code').addEventListener('click', async () => {
@@ -1957,7 +2038,7 @@
         emptyTitle: 'Rien à résumer pour l’instant',
         intro: { perso: 'Ici, tu verras d’un coup d’œil ton patrimoine, ton mois en cours et la part commune du foyer.',
                  commun: 'Ici, vous verrez d’un coup d’œil le compte commun, le budget partagé et vos projets à deux.' },
-        features: ['Patrimoine total et répartition par compte', 'Projection à 1, 5, 10 et 20 ans',
+        features: ['Patrimoine total et répartition par compte', 'Projection de 1 à 30 ans',
                    'Dépenses du mois comparées au prévu', 'Avancement des objectifs'],
         how: { perso: 'Commence par ajouter un compte dans l’onglet Épargne : cette page se remplira toute seule.',
                commun: 'Commencez par ajouter le compte commun dans l’onglet Épargne : cette page se remplira toute seule.' },
@@ -2817,7 +2898,7 @@
 
       async remove() {
         const acc = this.editing;
-        if (!acc || !confirm(`Supprimer « ${acc.name} » et tout son historique de relevés ?`)) return;
+        if (!acc || !await askConfirm(`Supprimer « ${acc.name} » et tout son historique de relevés ?`)) return;
         try { await db.remove('ep_accounts', acc.id); }
         catch (err) { return setMsg($('acc-msg'), frError(err)); }
         $('account-dialog').close();
@@ -2976,7 +3057,7 @@
 
       async removeHolding() {
         const { h } = this.editingHolding;
-        if (!h || !confirm(`Supprimer la position ${h.symbol} ?`)) return;
+        if (!h || !await askConfirm(`Supprimer la position ${h.symbol} ?`)) return;
         try { await db.remove('ep_holdings', h.id); }
         catch (err) { return setMsg($('hold-msg'), frError(err)); }
         $('holding-dialog').close();
@@ -3042,7 +3123,7 @@
 
       async removeSnap() {
         const { acc, month, existing } = this.snapEditing;
-        if (!existing || !confirm(`Supprimer le relevé ${acc.name} de ${fmtMonth.format(parseMonth(month))} ?`)) return;
+        if (!existing || !await askConfirm(`Supprimer le relevé ${acc.name} de ${fmtMonth.format(parseMonth(month))} ?`)) return;
         try { await db.remove('ep_balance_snapshots', existing.id); }
         catch (err) { return setMsg($('snap-msg'), frError(err)); }
         $('snap-dialog').close();
@@ -3070,7 +3151,7 @@
       },
 
       openMonth() {
-        if (!this.accounts.length) return alert('Ajoute d’abord un compte dans Épargne.');
+        if (!this.accounts.length) return notify('Ajoute d’abord un compte dans Épargne.');
         const before = this.monthBefore();
         const closed = !!this.monthClose;
         const saved = closed ? this.monthClose.details.inputs || {} : {};
@@ -3541,6 +3622,11 @@
       });
     }
 
+    // Confirmation (« Supprimer… ? ») et information, dans la fenêtre de l'app
+    const askConfirm = (title) => ask({ title, ok: /^(Supprimer|Annuler)/.test(title) ? 'Oui, ' + title.split(' ')[0].toLowerCase() : 'Confirmer',
+                                        danger: /^(Supprimer|Annuler)/.test(title) });
+    const notify = (text, title = 'Information') => ask({ title, text, ok: 'OK' });
+
     // ================== « Payé par » (lignes de budget et dépenses) ==================
     // Badges : « Payé par Parents », « À rembourser », « Remboursé ».
     function paidByTags(row) {
@@ -3839,7 +3925,7 @@
       },
 
       async removeAid() {
-        if (!this.editingAid || !confirm('Supprimer cette aide familiale ?')) return;
+        if (!this.editingAid || !await askConfirm('Supprimer cette aide familiale ?')) return;
         try { await db.remove('ep_incomes', this.editingAid.id); }
         catch (err) { return setMsg($('aid-msg'), frError(err)); }
         $('aid-dialog').close();
@@ -3885,7 +3971,7 @@
 
       async removeLine() {
         const line = this.editing;
-        if (!line || !confirm(`Supprimer la ligne « ${line.label} » ?`)) return;
+        if (!line || !await askConfirm(`Supprimer la ligne « ${line.label} » ?`)) return;
         try { await db.remove('ep_budget_lines', line.id); }
         catch (err) { return setMsg($('line-msg'), frError(err)); }
         $('line-dialog').close();
@@ -4086,8 +4172,9 @@
           if (a === 'copy-prev') return this.copyPrevious();
           if (a === 'cancel-adjust') { this.adjusting = null; return this.render(); }
           if (a === 'reset-cat') return this.resetOverrides(this.overrides.filter((o) => o.category === el.dataset.cat));
-          if (a === 'reset-all' && confirm(`Revenir au budget par défaut pour ${fmtMonth.format(this.month)} ?`)) {
-            return this.resetOverrides(this.overrides);
+          if (a === 'reset-all') {
+            return askConfirm(`Revenir au budget par défaut pour ${fmtMonth.format(this.month)} ?`)
+              .then((yes) => yes && this.resetOverrides(this.overrides));
           }
           if (a === 'del-exp') return this.removeExpense(el.dataset.id);
           if (a === 'settle') return this.settle(el);
@@ -4383,29 +4470,29 @@
 
       async settle(el) {
         const { from, to, amount } = el.dataset;
-        if (!confirm(`Confirmer : ${memberName(from)} a remboursé ${money(Number(amount))} à ${memberName(to)} ?`)) return;
+        if (!await askConfirm(`Confirmer : ${memberName(from)} a remboursé ${money(Number(amount))} à ${memberName(to)} ?`)) return;
         try {
           await db.insert('ep_settlements', { month: isoMonth(this.month), from_user: from, to_user: to, amount: Number(amount) }, { space: 'commun' });
           await this.mount(this.root);
-        } catch (err) { alert(frError(err)); }
+        } catch (err) { notify(frError(err)); }
       },
 
       async unsettle(id) {
-        if (!confirm('Annuler ce remboursement ?')) return;
+        if (!await askConfirm('Annuler ce remboursement ?')) return;
         try { await db.remove('ep_settlements', id); await this.mount(this.root); }
-        catch (err) { alert(frError(err)); }
+        catch (err) { notify(frError(err)); }
       },
 
       async toggleReimbursed(id, reimbursed) {
         try { await db.update('ep_expenses', id, { reimbursed }); await this.mount(this.root); }
-        catch (err) { alert(frError(err)); }
+        catch (err) { notify(frError(err)); }
       },
 
       async removeExpense(id) {
         const exp = this.expenses.find((e) => e.id === id);
-        if (!exp || !confirm(`Supprimer « ${exp.label} » (${money(exp.amount)}) ?`)) return;
+        if (!exp || !await askConfirm(`Supprimer « ${exp.label} » (${money(exp.amount)}) ?`)) return;
         try { await db.remove('ep_expenses', id); await this.mount(this.root); }
-        catch (err) { alert(frError(err)); }
+        catch (err) { notify(frError(err)); }
       },
 
       // Prévu ajusté pour ce mois seulement (ep_month_overrides) ; le budget par défaut ne change pas.
@@ -4417,14 +4504,14 @@
         try {
           if (existing) await db.update('ep_month_overrides', existing.id, { planned_amount: planned });
           else await db.insert('ep_month_overrides', { month: isoMonth(this.month), category, planned_amount: planned });
-        } catch (err) { return alert(frError(err)); }
+        } catch (err) { return notify(frError(err)); }
         this.adjusting = null;
         await this.mount(this.root);
       },
 
       async resetOverrides(list) {
         try { await Promise.all(list.map((o) => db.remove('ep_month_overrides', o.id))); }
-        catch (err) { return alert(frError(err)); }
+        catch (err) { return notify(frError(err)); }
         this.adjusting = null;
         await this.mount(this.root);
       },
@@ -4814,7 +4901,7 @@
       },
 
       async remove() {
-        if (!this.editing || !confirm(`Supprimer « ${this.editing.name} » ?`)) return;
+        if (!this.editing || !await askConfirm(`Supprimer « ${this.editing.name} » ?`)) return;
         try { await db.remove('ep_loans', this.editing.id); }
         catch (err) { return setMsg($('loan-msg'), frError(err)); }
         $('loan-dialog').close();
@@ -4933,7 +5020,7 @@
         if (amount === null || amount === 0) return form.elements.amount.focus();
         const saved = Math.max(0, (Number(goal.saved) || 0) + amount);
         try { await db.update('ep_goals', goal.id, { saved }); }
-        catch (err) { return alert(frError(err)); }
+        catch (err) { return notify(frError(err)); }
         this.contributing = null;
         await remountAll();
       },
@@ -4972,7 +5059,7 @@
       },
 
       async remove() {
-        if (!this.editing || !confirm(`Supprimer l’objectif « ${this.editing.name} » ?`)) return;
+        if (!this.editing || !await askConfirm(`Supprimer l’objectif « ${this.editing.name} » ?`)) return;
         try { await db.remove('ep_goals', this.editing.id); }
         catch (err) { return setMsg($('goal-msg'), frError(err)); }
         $('goal-dialog').close();

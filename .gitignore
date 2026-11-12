@@ -6,3 +6,10 @@ index_V1.html
 
 # Réglages locaux de Claude Code
 .claude/
+
+# Plan d'action interne
+PLAN_V2.md
+
+# Documents internes (prénoms, détail du projet) : restent sur le Mac, hors du dépôt public
+CLAUDE.md
+SPEC.md

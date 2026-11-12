@@ -435,4 +435,6 @@ grant execute on function public.ep_join_household(text, text)   to authenticate
 --         puis supabase/migration_holdings_v3.sql (copier Trade Republic : quantité facultative, investi = valeur − gain).
 --         puis supabase/migration_mois.sql (« Mettre à jour mon mois » + taux d'inflation).
 --         puis supabase/migration_categories.sql (catégories personnalisées), et test_rls_categories.sql pour la vérifier.
+--         puis, LOT 1 (sécurité), dans cet ordre : migration_lot1_prive.sql, migration_lot1_index.sql,
+--         migration_lot1_contraintes.sql, migration_lot1_invitation.sql ; puis test_rls_lot1.sql.
 -- ---------------------------------------------------------------------
