@@ -9,8 +9,8 @@
 do $$
 declare
   v_hh     uuid;
-  v_lucas  uuid;
-  v_celia  uuid;
+  v_membre1  uuid;
+  v_membre2  uuid;
   v_fake1  uuid := gen_random_uuid();   -- utilisateurs fictifs, hors foyer (essais d'invitation)
   v_fake2  uuid := gen_random_uuid();
   v_test_hh uuid;
@@ -20,9 +20,9 @@ declare
   t        text;
   v_report text[] := '{}';
 begin
-  select household_id, user_id into v_hh, v_lucas from public.ep_members where slot = 1 limit 1;
-  select user_id into v_celia from public.ep_members where household_id = v_hh and slot = 2;
-  if v_celia is null then raise exception 'Célia n''a pas encore rejoint le foyer : test impossible.'; end if;
+  select household_id, user_id into v_hh, v_membre1 from public.ep_members where slot = 1 limit 1;
+  select user_id into v_membre2 from public.ep_members where household_id = v_hh and slot = 2;
+  if v_membre2 is null then raise exception 'membre 2 n''a pas encore rejoint le foyer : test impossible.'; end if;
 
   -- ---------- 1. Fonctions : plus rien de sensible dans le schéma public (publié par l'API) ----------
   if to_regprocedure('public.ep_is_member(uuid)') is not null
@@ -55,37 +55,37 @@ begin
   v_report := array_append(v_report, 'OK 3 — ep_ping reste appelable pour le réveil'::text);
 
   -- ---------- 2. Confidentialité table par table, sur tes vraies données ----------
-  perform set_config('request.jwt.claims', json_build_object('sub', v_celia, 'role', 'authenticated')::text, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_membre2, 'role', 'authenticated')::text, true);
   foreach t in array array['ep_accounts', 'ep_budget_lines', 'ep_month_overrides', 'ep_expenses', 'ep_incomes',
                            'ep_loans', 'ep_goals', 'ep_holdings', 'ep_month_closes', 'ep_categories']
   loop
     reset role;
-    execute format('select count(*) from public.%I where scope = ''perso'' and user_id = $1', t) into v_admin using v_lucas;
+    execute format('select count(*) from public.%I where scope = ''perso'' and user_id = $1', t) into v_admin using v_membre1;
     set local role authenticated;
-    execute format('select count(*) from public.%I where scope = ''perso'' and user_id = $1', t) into v_n using v_lucas;
-    if v_n <> 0 then raise exception 'ÉCHEC : Célia voit % ligne(s) perso de Lucas dans %', v_n, t; end if;
+    execute format('select count(*) from public.%I where scope = ''perso'' and user_id = $1', t) into v_n using v_membre1;
+    if v_n <> 0 then raise exception 'ÉCHEC : membre 2 voit % ligne(s) perso de membre 1 dans %', v_n, t; end if;
     execute format('select count(*) from public.%I where scope = ''commun''', t) into v_n;
     reset role;
     execute format('select count(*) from public.%I where scope = ''commun'' and household_id = $1', t) into v_admin using v_hh;
-    if v_n <> v_admin then raise exception 'ÉCHEC : Célia devrait voir % ligne(s) communes dans % (vu : %)', v_admin, t, v_n; end if;
+    if v_n <> v_admin then raise exception 'ÉCHEC : membre 2 devrait voir % ligne(s) communes dans % (vu : %)', v_admin, t, v_n; end if;
   end loop;
   reset role;
   select count(*) into v_admin from public.ep_balance_snapshots s join public.ep_accounts a on a.id = s.account_id
-   where a.scope = 'perso' and a.user_id = v_lucas;
+   where a.scope = 'perso' and a.user_id = v_membre1;
   set local role authenticated;
   select count(*) into v_n from public.ep_balance_snapshots s join public.ep_accounts a on a.id = s.account_id
-   where a.user_id = v_lucas;
-  if v_n <> 0 then raise exception 'ÉCHEC : Célia voit % relevé(s) de Lucas', v_n; end if;
-  v_report := array_append(v_report, format('OK 4 — Célia ne voit aucune ligne perso de Lucas (11 tables, dont %s relevés) et voit tout le Commun', v_admin));
+   where a.user_id = v_membre1;
+  if v_n <> 0 then raise exception 'ÉCHEC : membre 2 voit % relevé(s) de membre 1', v_n; end if;
+  v_report := array_append(v_report, format('OK 4 — membre 2 ne voit aucune ligne perso de membre 1 (11 tables, dont %s relevés) et voit tout le Commun', v_admin));
 
-  -- Contrôle positif : Lucas voit bien ses propres lignes
+  -- Contrôle positif : membre 1 voit bien ses propres lignes
   reset role;
-  select count(*) into v_admin from public.ep_accounts where scope = 'perso' and user_id = v_lucas;
-  perform set_config('request.jwt.claims', json_build_object('sub', v_lucas, 'role', 'authenticated')::text, true);
+  select count(*) into v_admin from public.ep_accounts where scope = 'perso' and user_id = v_membre1;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_membre1, 'role', 'authenticated')::text, true);
   set local role authenticated;
-  select count(*) into v_n from public.ep_accounts where scope = 'perso' and user_id = v_lucas;
-  if v_n <> v_admin then raise exception 'ÉCHEC : Lucas devrait voir ses % compte(s) perso (vu : %)', v_admin, v_n; end if;
-  v_report := array_append(v_report, format('OK 5 — Lucas voit bien ses %s compte(s) perso', v_admin));
+  select count(*) into v_n from public.ep_accounts where scope = 'perso' and user_id = v_membre1;
+  if v_n <> v_admin then raise exception 'ÉCHEC : membre 1 devrait voir ses % compte(s) perso (vu : %)', v_admin, v_n; end if;
+  v_report := array_append(v_report, format('OK 5 — membre 1 voit bien ses %s compte(s) perso', v_admin));
 
   -- ---------- 3. Invitation ----------
   -- Foyer complet : régénérer est refusé
